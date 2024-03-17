@@ -9,7 +9,7 @@
 
 #ifndef FAISS_CLUSTERING_H
 #define FAISS_CLUSTERING_H
-#include <faiss/Index.h>
+#include  <faiss/Index.h>
 
 #include <vector>
 
@@ -17,6 +17,7 @@ namespace faiss {
 
 /** Class for the clustering parameters. Can be passed to the
  * constructor of the Clustering object.
+ * 存储聚类所需要的参数, 这个参数类可以被继承
  */
 struct ClusteringParameters {
     /// number of clustering iterations
@@ -28,8 +29,10 @@ struct ClusteringParameters {
     bool verbose = false;
     /// whether to normalize centroids after each iteration (useful for inner
     /// product clustering)
+    /// 是否堆每个cluter进行正则化
     bool spherical = false;
     /// round centroids coordinates to integer after each iteration?
+    /// 是否将质心点约成整数
     bool int_centroids = false;
     /// re-train index after each iteration?
     bool update_index = false;
@@ -104,7 +107,7 @@ struct Clustering : ClusteringParameters {
      * to decode the input vectors.
      *
      * @param codec      codec used to decode the vectors (nullptr =
-     *                   vectors are in fact floats)
+     *                   vectors are in fact floats), 也就是说用于解码的解码器
      */
     void train_encoded(
             idx_t nx,

@@ -27,6 +27,11 @@ namespace faiss {
  *   resutls is submitted
  * All classes are templated on C which to define wheter the min or the max of
  * results is to be kept.
+ *
+ * 结果处理类:
+ *  * 使用Top1Block实际上就是比大小
+ *  * 使用HeapBlock实际上就是采用堆进行结果计算
+ * 每个子类都存在一个内部类, 用于处理单个batch的结果计算
  *****************************************************************/
 
 template <class C>
@@ -54,6 +59,7 @@ struct BlockResultHandler {
 };
 
 // handler for a single query
+// 处理single query
 template <class C>
 struct ResultHandler {
     // if not better than threshold, then not necessary to call add_result
@@ -73,10 +79,10 @@ struct ResultHandler {
 
 template <class C>
 struct Top1BlockResultHandler : BlockResultHandler<C> {
-    using T = typename C::T;
-    using TI = typename C::TI;
-    using BlockResultHandler<C>::i0;
-    using BlockResultHandler<C>::i1;
+    using T = typename C::T; // value类型
+    using TI = typename C::TI; // label的类型
+    using BlockResultHandler<C>::i0; // range start
+    using BlockResultHandler<C>::i1; // range end
 
     // contains exactly nq elements
     T* dis_tab;
@@ -86,6 +92,7 @@ struct Top1BlockResultHandler : BlockResultHandler<C> {
     Top1BlockResultHandler(size_t nq, T* dis_tab, TI* ids_tab)
             : BlockResultHandler<C>(nq), dis_tab(dis_tab), ids_tab(ids_tab) {}
 
+    // 计算结果被保存在这个struct里面
     struct SingleResultHandler : ResultHandler<C> {
         Top1BlockResultHandler& hr;
         using ResultHandler<C>::threshold;
@@ -103,6 +110,7 @@ struct Top1BlockResultHandler : BlockResultHandler<C> {
         }
 
         /// add one result for query i
+        /// 返回最小值
         bool add_result(T dis, TI idx) final {
             if (C::cmp(this->threshold, dis)) {
                 threshold = dis;
@@ -163,6 +171,9 @@ struct Top1BlockResultHandler : BlockResultHandler<C> {
  * Heap based result handler
  *****************************************************************/
 
+/** 基于Heap的处理方式
+ *
+ */
 template <class C>
 struct HeapBlockResultHandler : BlockResultHandler<C> {
     using T = typename C::T;
@@ -175,6 +186,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
 
     int64_t k; // number of results to keep
 
+    // nq -> query number | heap_dis_tab -> distance heap | heap_ids_tab -> id heap | k -> top k
     HeapBlockResultHandler(
             size_t nq,
             T* heap_dis_tab,
@@ -190,6 +202,8 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
      * called from 1 thread)
      */
 
+    // 一次查询的结果
+    // 处理一次查询的内部类
     struct SingleResultHandler : ResultHandler<C> {
         HeapBlockResultHandler& hr;
         using ResultHandler<C>::threshold;
@@ -198,20 +212,26 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
         T* heap_dis;
         TI* heap_ids;
 
+        // 显式实例化
         explicit SingleResultHandler(HeapBlockResultHandler& hr)
                 : hr(hr), k(hr.k) {}
 
         /// begin results for query # i
+        /// 处理第i个query
         void begin(size_t i) {
+            // 第i个query的distance
             heap_dis = hr.heap_dis_tab + i * k;
+            // 第i个query的ids
             heap_ids = hr.heap_ids_tab + i * k;
             heap_heapify<C>(k, heap_dis, heap_ids);
             threshold = heap_dis[0];
         }
 
         /// add one result for query i
+        /// 对于query i增加
         bool add_result(T dis, TI idx) final {
             if (C::cmp(threshold, dis)) {
+                // 大根堆
                 heap_replace_top<C>(k, heap_dis, heap_ids, dis, idx);
                 threshold = heap_dis[0];
                 return true;
@@ -220,6 +240,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
         }
 
         /// series of results for query i is done
+        /// 将最后的结果变成有序结构
         void end() {
             heap_reorder<C>(k, heap_dis, heap_ids);
         }
@@ -230,6 +251,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
      */
 
     /// begin
+    /// 批量计算, 构成heap
     void begin_multiple(size_t i0_2, size_t i1_2) final {
         this->i0 = i0_2;
         this->i1 = i1_2;
@@ -275,6 +297,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
  *****************************************************************/
 
 /// Reservoir for a single query
+///
 template <class C>
 struct ReservoirTopN : ResultHandler<C> {
     using T = typename C::T;
@@ -284,9 +307,9 @@ struct ReservoirTopN : ResultHandler<C> {
     T* vals;
     TI* ids;
 
-    size_t i;        // number of stored elements
-    size_t n;        // number of requested elements
-    size_t capacity; // size of storage
+    size_t i;        // number of stored elements, 存储元素的数目
+    size_t n;        // number of requested elements, 请求元素的数目
+    size_t capacity; // size of storage, 元素的容量
 
     ReservoirTopN() {}
 
@@ -296,13 +319,16 @@ struct ReservoirTopN : ResultHandler<C> {
         threshold = C::neutral();
     }
 
+    // add_result采用的计算方式:
     bool add_result(T val, TI id) final {
         bool updated_threshold = false;
         if (C::cmp(threshold, val)) {
+            // 容量达到的时候shrink并更新threshold
             if (i == capacity) {
                 shrink_fuzzy();
                 updated_threshold = true;
             }
+            // 如果小于阈值就加入结果
             vals[i] = val;
             ids[i] = id;
             i++;
@@ -329,6 +355,7 @@ struct ReservoirTopN : ResultHandler<C> {
     }
 
     void to_result(T* heap_dis, TI* heap_ids) const {
+        // 最后还是采用heap的形式更改最终结果
         for (int j = 0; j < std::min(i, n); j++) {
             heap_push<C>(j + 1, heap_dis, heap_ids, vals[j], ids[j]);
         }

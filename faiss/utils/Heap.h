@@ -77,6 +77,7 @@ inline void heap_pop(size_t k, typename C::T* bh_val, typename C::TI* bh_ids) {
 
 /** Pushes the element (val, ids) into the heap bh_val[0..k-2] and
  * bh_ids[0..k-2].  on output the element at k-1 is defined.
+ * 就是一个正常的push过程
  */
 template <class C>
 inline void heap_push(
@@ -206,7 +207,8 @@ inline void maxheap_replace_top(
 
 /* Initialization phase for the heap (with unconditionnal pushes).
  * Store k0 elements in a heap containing up to k values. Note that
- * (bh_val, bh_ids) can be the same as (x, ids) */
+ * (bh_val, bh_ids) can be the same as (x, ids)
+ * 存储k个元素的heap 初始化为填充max元素, 否则就是正常的heap_push */
 template <class C>
 inline void heap_heapify(
         size_t k,
@@ -361,16 +363,19 @@ inline size_t maxheap_reorder(size_t k, T* bh_val, int64_t* bh_ids) {
 /** a template structure for a set of [min|max]-heaps it is tailored
  * so that the actual data of the heaps can just live in compact
  * arrays.
+ *
+ * 模板最大对堆/最小堆
+ * 采用结构体形式定义
  */
 template <typename C>
 struct HeapArray {
     typedef typename C::TI TI;
     typedef typename C::T T;
 
-    size_t nh; ///< number of heaps
-    size_t k;  ///< allocated size per heap
-    TI* ids;   ///< identifiers (size nh * k)
-    T* val;    ///< values (distances or similarities), size nh * k
+    size_t nh; ///< number of heaps, 可以理解是batch size
+    size_t k;  ///< allocated size per heap, 可以理解是top k
+    TI* ids;   ///< identifiers (size nh * k), 可以理解是label
+    T* val;    ///< values (distances or similarities), size nh * k, 可以理解是distance
 
     /// Return the list of values for a heap
     T* get_val(size_t key) {

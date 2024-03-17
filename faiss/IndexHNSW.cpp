@@ -114,7 +114,7 @@ struct NegativeDistanceComputer : DistanceComputer {
     }
 };
 
-DistanceComputer* storage_distance_computer(const Index* storage) {
+DistanceComputer* storage_distance_computer(const Index* storage) { // 获取距离计算函数
     if (is_similarity_metric(storage->metric_type)) {
         return new NegativeDistanceComputer(storage->get_distance_computer());
     } else {
@@ -122,6 +122,14 @@ DistanceComputer* storage_distance_computer(const Index* storage) {
     }
 }
 
+/** 2. index.add() -> hnsw_add_vertices()
+ * @param index_hnsw
+ * @param n0  the number of original vector
+ * @param n   the number of vector to be added
+ * @param x   the vector
+ * @param verbose
+ * @param preset_levels
+ */
 void hnsw_add_vertices(
         IndexHNSW& index_hnsw,
         size_t n0,
@@ -131,7 +139,7 @@ void hnsw_add_vertices(
         bool preset_levels = false) {
     size_t d = index_hnsw.d;
     HNSW& hnsw = index_hnsw.hnsw;
-    size_t ntotal = n0 + n;
+    size_t ntotal = n0 + n; // 当前所有点的数目
     double t0 = getmillisecs();
     if (verbose) {
         printf("hnsw_add_vertices: adding %zd elements on top of %zd "
@@ -144,7 +152,7 @@ void hnsw_add_vertices(
     if (n == 0) {
         return;
     }
-
+    // 计算每个点的level, 相当于预处理
     int max_level = hnsw.prepare_level_tab(n, preset_levels);
 
     if (verbose) {
@@ -153,24 +161,24 @@ void hnsw_add_vertices(
 
     std::vector<omp_lock_t> locks(ntotal);
     for (int i = 0; i < ntotal; i++)
-        omp_init_lock(&locks[i]);
+        omp_init_lock(&locks[i]); // 为每一个节点加锁
 
     // add vectors from highest to lowest level
     std::vector<int> hist;
     std::vector<int> order(n);
 
-    { // make buckets with vectors of the same level
+    { // make buckets with vectors of the same level, 这里相当于按照level为每个point指定顺序
 
         // build histogram
         for (int i = 0; i < n; i++) {
-            storage_idx_t pt_id = i + n0;
-            int pt_level = hnsw.levels[pt_id] - 1;
+            storage_idx_t pt_id = i + n0; // 点的id
+            int pt_level = hnsw.levels[pt_id] - 1; // 这个点所在的level
             while (pt_level >= hist.size())
                 hist.push_back(0);
-            hist[pt_level]++;
+            hist[pt_level]++; // 统计每个level的数目
         }
 
-        // accumulate
+        // accumulate, 累计分布
         std::vector<int> offsets(hist.size() + 1, 0);
         for (int i = 0; i < hist.size() - 1; i++) {
             offsets[i + 1] = offsets[i] + hist[i];
@@ -187,25 +195,26 @@ void hnsw_add_vertices(
     idx_t check_period = InterruptCallback::get_period_hint(
             max_level * index_hnsw.d * hnsw.efConstruction);
 
-    { // perform add
+    { // perform add, 这里相当于进行add操作
         RandomGenerator rng2(789);
 
         int i1 = n;
-
+        // 自顶向下, 获取每一层点的个数, 按层处理
         for (int pt_level = hist.size() - 1; pt_level >= 0; pt_level--) {
-            int i0 = i1 - hist[pt_level];
+            int i0 = i1 - hist[pt_level]; // 剩余点的数目
 
             if (verbose) {
                 printf("Adding %d elements at level %d\n", i1 - i0, pt_level);
             }
 
-            // random permutation to get rid of dataset order bias
+            // random permutation to get rid of dataset order bias, 对这个level的点序排序
+            // 对这一层中的点进行并发处理
             for (int j = i0; j < i1; j++)
                 std::swap(order[j], order[j + rng2.rand_int(i1 - j)]);
 
             bool interrupt = false;
 
-#pragma omp parallel if (i1 > i0 + 100)
+#pragma omp parallel if (i1 > i0 + 100) // 这个level中点的数目
             {
                 VisitedTable vt(ntotal);
 
@@ -217,17 +226,17 @@ void hnsw_add_vertices(
 
                 // here we should do schedule(dynamic) but this segfaults for
                 // some versions of LLVM. The performance impact should not be
-                // too large when (i1 - i0) / num_threads >> 1
+                // too large when (i1 - i0) / num_threads >> 1 在这里并发
 #pragma omp for schedule(static)
-                for (int i = i0; i < i1; i++) {
-                    storage_idx_t pt_id = order[i];
-                    dis->set_query(x + (pt_id - n0) * d);
+                for (int i = i0; i < i1; i++) { // 相当于这是对于每一个query
+                    storage_idx_t pt_id = order[i]; // 当前顺序的节点id
+                    dis->set_query(x + (pt_id - n0) * d); // 设置query
 
                     // cannot break
                     if (interrupt) {
                         continue;
                     }
-
+                    // 带有锁的连边操作, 这里实际上是为了并发处理, 每个节点是单线程处理
                     hnsw.add_with_locks(*dis, pt_level, pt_id, locks, vt);
 
                     if (prev_display >= 0 && i - i0 > prev_display + 10000) {
@@ -246,15 +255,15 @@ void hnsw_add_vertices(
             if (interrupt) {
                 FAISS_THROW_MSG("computation interrupted");
             }
-            i1 = i0;
+            i1 = i0; // 最后将点变成i0, 进行下一层的循环
         }
-        FAISS_ASSERT(i1 == 0);
+        FAISS_ASSERT(i1 == 0); // 最后一定是0
     }
     if (verbose) {
         printf("Done in %.3f ms\n", getmillisecs() - t0);
     }
 
-    for (int i = 0; i < ntotal; i++) {
+    for (int i = 0; i < ntotal; i++) { // 将所有的锁清算
         omp_destroy_lock(&locks[i]);
     }
 }
@@ -282,12 +291,13 @@ void IndexHNSW::train(idx_t n, const float* x) {
             storage,
             "Please use IndexHNSWFlat (or variants) instead of IndexHNSW directly");
     // hnsw structure does not require training
+    // 所以这里就是do nothing, 实际的add才会起作用
     storage->train(n, x);
     is_trained = true;
 }
 
 namespace {
-
+// HNSW的搜索函数
 template <class BlockResultHandler>
 void hnsw_search(
         const IndexHNSW* index,
@@ -301,7 +311,7 @@ void hnsw_search(
     const SearchParametersHNSW* params = nullptr;
     const HNSW& hnsw = index->hnsw;
 
-    int efSearch = hnsw.efSearch;
+    int efSearch = hnsw.efSearch; // 搜索的保存的数目
     if (params_in) {
         params = dynamic_cast<const SearchParametersHNSW*>(params_in);
         FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
@@ -312,19 +322,19 @@ void hnsw_search(
     idx_t check_period = InterruptCallback::get_period_hint(
             hnsw.max_level * index->d * efSearch);
 
-    for (idx_t i0 = 0; i0 < n; i0 += check_period) {
+    for (idx_t i0 = 0; i0 < n; i0 += check_period) { // check_period应该是检查的周期, 这里是对所有的query进行操作
         idx_t i1 = std::min(i0 + check_period, n);
 
 #pragma omp parallel
         {
-            VisitedTable vt(index->ntotal);
-            typename BlockResultHandler::SingleResultHandler res(bres);
+            VisitedTable vt(index->ntotal); // visit表
+            typename BlockResultHandler::SingleResultHandler res(bres); // 单结果处理函数
 
             std::unique_ptr<DistanceComputer> dis(
-                    storage_distance_computer(index->storage));
+                    storage_distance_computer(index->storage)); // 距离计算函数
 
 #pragma omp for reduction(+ : n1, n2, n3, ndis, nreorder) schedule(guided)
-            for (idx_t i = i0; i < i1; i++) {
+            for (idx_t i = i0; i < i1; i++) { // 对i0-i1中的每一个query并行
                 res.begin(i);
                 dis->set_query(x + i * index->d);
 
@@ -392,9 +402,11 @@ void IndexHNSW::add(idx_t n, const float* x) {
             "Please use IndexHNSWFlat (or variants) instead of IndexHNSW directly");
     FAISS_THROW_IF_NOT(is_trained);
     int n0 = ntotal;
+    // x被加入到storage中
     storage->add(n, x);
+    // ntotal的数量
     ntotal = storage->ntotal;
-
+    // 为hnsw添加边
     hnsw_add_vertices(*this, n0, n, x, verbose, hnsw.levels.size() == ntotal);
 }
 

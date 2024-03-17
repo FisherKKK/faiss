@@ -43,6 +43,8 @@ IndexIVFFlat::IndexIVFFlat() {
     by_residual = false;
 }
 
+// IndexIVF存在add方法
+// add方法调用这个虚函数
 void IndexIVFFlat::add_core(
         idx_t n,
         const float* x,
@@ -60,20 +62,20 @@ void IndexIVFFlat::add_core(
 
 #pragma omp parallel reduction(+ : n_add)
     {
-        int nt = omp_get_num_threads();
-        int rank = omp_get_thread_num();
+        int nt = omp_get_num_threads(); // 线程数目
+        int rank = omp_get_thread_num(); // 当前线程id
 
         // each thread takes care of a subset of lists
         for (size_t i = 0; i < n; i++) {
             idx_t list_no = coarse_idx[i];
 
-            if (list_no >= 0 && list_no % nt == rank) {
-                idx_t id = xids ? xids[i] : ntotal + i;
-                const float* xi = x + i * d;
+            if (list_no >= 0 && list_no % nt == rank) { // 当前no是否放在rank线程处理
+                idx_t id = xids ? xids[i] : ntotal + i; //
+                const float* xi = x + i * d; // 对应的向量
                 size_t offset =
                         invlists->add_entry(list_no, id, (const uint8_t*)xi);
                 dm_adder.add(i, list_no, offset);
-                n_add++;
+                n_add++; // 最后每个线程进行加法
             } else if (rank == 0 && list_no == -1) {
                 dm_adder.add(i, -1, 0);
             }
@@ -151,6 +153,7 @@ struct IVFFlatScanner : InvertedListScanner {
         return dis;
     }
 
+    // 这里本质上就是在这个聚类中心中进行查找
     size_t scan_codes(
             size_t list_size,
             const uint8_t* codes,

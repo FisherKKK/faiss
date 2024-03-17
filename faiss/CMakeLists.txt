@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+# 设置源文件 set命令, FAISS_SRC = [...]
 set(FAISS_SRC
   AutoTune.cpp
   Clustering.cpp
@@ -96,6 +97,7 @@ set(FAISS_SRC
   utils/distances_fused/simdlib_based.cpp
 )
 
+# 设置头文件, FAISS_HEADERS = [...]
 set(FAISS_HEADERS
   AutoTune.h
   Clustering.h
@@ -219,16 +221,20 @@ set(FAISS_HEADERS
   utils/hamming_distance/avx2-inl.h
 )
 
+# 非WINDOWS
 if(NOT WIN32)
   list(APPEND FAISS_SRC invlists/OnDiskInvertedLists.cpp)
   list(APPEND FAISS_HEADERS invlists/OnDiskInvertedLists.h)
 endif()
 
 # Export FAISS_HEADERS variable to parent scope.
+# 扩大FAISS_HEADERS的可见域
 set(FAISS_HEADERS ${FAISS_HEADERS} PARENT_SCOPE)
 
+# 将FAISS_SRC作为faiss library
 add_library(faiss ${FAISS_SRC})
 
+# FAISS_SRC作为faiss_avx2 lib
 add_library(faiss_avx2 ${FAISS_SRC})
 if(NOT FAISS_OPT_LEVEL STREQUAL "avx2")
   set_target_properties(faiss_avx2 PROPERTIES EXCLUDE_FROM_ALL TRUE)

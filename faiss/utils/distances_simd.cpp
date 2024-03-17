@@ -210,6 +210,7 @@ float fvec_norm_L2sqr(const float* x, size_t d) {
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+// 这里相当于采用了优化distance计算
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float fvec_L2sqr(const float* x, const float* y, size_t d) {
     size_t i;

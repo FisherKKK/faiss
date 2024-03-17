@@ -161,10 +161,10 @@ struct FAISS_API InterruptCallback {
     static size_t get_period_hint(size_t flops);
 };
 
-/// set implementation optimized for fast access.
+/// set implementation optimized for fast access. 实现快速优化的访问表
 struct VisitedTable {
-    std::vector<uint8_t> visited;
-    uint8_t visno;
+    std::vector<uint8_t> visited; ///
+    uint8_t visno; // visit number, 被访问的次数
 
     explicit VisitedTable(int size) : visited(size), visno(1) {}
 
@@ -178,7 +178,7 @@ struct VisitedTable {
         return visited[no] == visno;
     }
 
-    /// reset all flags to false
+    /// reset all flags to false, why we do this, 避免每次的重复更新
     void advance() {
         visno++;
         if (visno == 250) {

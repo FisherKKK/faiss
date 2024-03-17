@@ -37,7 +37,7 @@ using ScopedCodes = InvertedLists::ScopedCodes;
 /*****************************************
  * Level1Quantizer implementation
  ******************************************/
-
+//
 Level1Quantizer::Level1Quantizer(Index* quantizer, size_t nlist)
         : quantizer(quantizer), nlist(nlist) {
     // here we set a low # iterations because this is typically used
@@ -63,7 +63,7 @@ void Level1Quantizer::train_q1(
     if (quantizer->is_trained && (quantizer->ntotal == nlist)) {
         if (verbose)
             printf("IVF quantizer does not need training.\n");
-    } else if (quantizer_trains_alone == 1) {
+    } else if (quantizer_trains_alone == 1) { // 仅仅训练quantizer
         if (verbose)
             printf("IVF quantizer trains alone...\n");
         quantizer->train(n, x);
@@ -71,7 +71,7 @@ void Level1Quantizer::train_q1(
         FAISS_THROW_IF_NOT_MSG(
                 quantizer->ntotal == nlist,
                 "nlist not consistent with quantizer size");
-    } else if (quantizer_trains_alone == 0) {
+    } else if (quantizer_trains_alone == 0) { // 使用quantizer作为kmeans的索引
         if (verbose)
             printf("Training level-1 quantizer on %zd vectors in %zdD\n", n, d);
 
@@ -81,7 +81,8 @@ void Level1Quantizer::train_q1(
             clus.train(n, x, *clustering_index);
             quantizer->add(nlist, clus.centroids.data());
         } else {
-            clus.train(n, x, *quantizer);
+            // 这个时候quantizer中保存了centeroid
+            clus.train(n, x, *quantizer); // 相当于使用quantizer进行聚类
         }
         quantizer->is_trained = true;
     } else if (quantizer_trains_alone == 2) {
@@ -181,7 +182,9 @@ void IndexIVF::add(idx_t n, const float* x) {
 
 void IndexIVF::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
     std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
+    // 这里相当于搜索最近邻
     quantizer->assign(n, x, coarse_idx.get());
+    // coarse_idx中保存了每个向量的最近邻
     add_core(n, x, xids, coarse_idx.get());
 }
 
@@ -310,8 +313,8 @@ void IndexIVF::search(
                                    float* distances,
                                    idx_t* labels,
                                    IndexIVFStats* ivf_stats) {
-        std::unique_ptr<idx_t[]> idx(new idx_t[n * nprobe]);
-        std::unique_ptr<float[]> coarse_dis(new float[n * nprobe]);
+        std::unique_ptr<idx_t[]> idx(new idx_t[n * nprobe]); // 每个x最近邻的nprobe个质心
+        std::unique_ptr<float[]> coarse_dis(new float[n * nprobe]); // 对应的距离
 
         double t0 = getmillisecs();
         quantizer->search(
@@ -320,10 +323,10 @@ void IndexIVF::search(
                 nprobe,
                 coarse_dis.get(),
                 idx.get(),
-                params ? params->quantizer_params : nullptr);
+                params ? params->quantizer_params : nullptr); // 找到最近邻的nprobe个质心
 
         double t1 = getmillisecs();
-        invlists->prefetch_lists(idx.get(), n * nprobe);
+        invlists->prefetch_lists(idx.get(), n * nprobe); // do nothing
 
         search_preassigned(
                 n,
@@ -344,14 +347,14 @@ void IndexIVF::search(
     if ((parallel_mode & ~PARALLEL_MODE_NO_HEAP_INIT) == 0) {
         int nt = std::min(omp_get_max_threads(), int(n));
         std::vector<IndexIVFStats> stats(nt);
-        std::mutex exception_mutex;
-        std::string exception_string;
+        std::mutex exception_mutex; // 异常锁
+        std::string exception_string; // 异常字符串
 
 #pragma omp parallel for if (nt > 1)
         for (idx_t slice = 0; slice < nt; slice++) {
             IndexIVFStats local_stats;
             idx_t i0 = n * slice / nt;
-            idx_t i1 = n * (slice + 1) / nt;
+            idx_t i1 = n * (slice + 1) / nt; // 每个线程处理的范围i0 -> i1
             if (i1 > i0) {
                 try {
                     sub_search_func(
@@ -457,7 +460,7 @@ void IndexIVF::search_preassigned(
          ******************************************************/
 
         // initialize + reorder a result heap
-
+        // 初始化simi和idxi, 这里初始化为heap
         auto init_result = [&](float* simi, idx_t* idxi) {
             if (!do_heap_init)
                 return;
@@ -490,7 +493,7 @@ void IndexIVF::search_preassigned(
         };
 
         // single list scan using the current scanner (with query
-        // set porperly) and storing results in simi and idxi
+        // set porperly) and storing results in simi and idxi, key是对应的centeroid id
         auto scan_one_list = [&](idx_t key,
                                  float coarse_dis_i,
                                  float* simi,
@@ -506,7 +509,7 @@ void IndexIVF::search_preassigned(
                     key,
                     nlist);
 
-            // don't waste time on empty lists
+            // don't waste time on empty lists, 对于这个倒排的list
             if (invlists->is_empty(key)) {
                 return (size_t)0;
             }
@@ -582,12 +585,12 @@ void IndexIVF::search_preassigned(
                     continue;
                 }
 
-                // loop over queries
+                // loop over queries, 当前处理的query
                 scanner->set_query(x + i * d);
                 float* simi = distances + i * k;
                 idx_t* idxi = labels + i * k;
 
-                init_result(simi, idxi);
+                init_result(simi, idxi); // 初始化为heap
 
                 idx_t nscan = 0;
 
@@ -1131,6 +1134,7 @@ void IndexIVF::train(idx_t n, const float* x) {
         printf("Training level-1 quantizer\n");
     }
 
+    // 采用指定的量化器进行k-means
     train_q1(n, x, verbose, metric_type);
 
     if (verbose) {
@@ -1138,6 +1142,7 @@ void IndexIVF::train(idx_t n, const float* x) {
     }
 
     // optional subsampling
+    // do nothing
     idx_t max_nt = train_encoder_num_vectors();
     if (max_nt <= 0) {
         max_nt = (size_t)1 << 35;

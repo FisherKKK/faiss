@@ -86,6 +86,7 @@ struct HNSW {
     };
 
     /// to sort pairs of (id, distance) from nearest to fathest or the reverse
+    /// NodeDis, 这里相当于是大根堆
     struct NodeDistCloser {
         float d;
         int id;
@@ -95,6 +96,7 @@ struct HNSW {
         }
     };
 
+    /// 这里相当于是小根堆
     struct NodeDistFarther {
         float d;
         int id;
@@ -105,17 +107,21 @@ struct HNSW {
     };
 
     /// assignment probability to each layer (sum=1)
+    /// 每一层的分配概率
     std::vector<double> assign_probas;
 
     /// number of neighbors stored per layer (cumulative), should not
     /// be changed after first add
+    /// 这一层节点拥有的邻居数目
     std::vector<int> cum_nneighbor_per_level;
 
     /// level of each vector (base level = 1), size = ntotal
+    /// levels中存储的是1 base, 但是我们在使用的时候会使用0
     std::vector<int> levels;
 
     /// offsets[i] is the offset in the neighbors array where vector i is stored
     /// size ntotal + 1
+    /// 每一个节点的邻居在neighbor的offset
     std::vector<size_t> offsets;
 
     /// neighbors[offsets[i]:offsets[i+1]] is the list of neighbors of vector i
@@ -128,7 +134,7 @@ struct HNSW {
 
     faiss::RandomGenerator rng;
 
-    /// maximum level
+    /// maximum level, 最大层
     int max_level = -1;
 
     /// expansion factor at construction time
@@ -142,6 +148,7 @@ struct HNSW {
     bool check_relative_distance = true;
 
     /// number of entry points in levels > 0.
+    /// 搜索时每一层入口点的数目
     int upper_beam = 1;
 
     /// use bounded queue during exploration
@@ -151,6 +158,7 @@ struct HNSW {
 
     /// initialize the assign_probas and cum_nneighbor_per_level to
     /// have 2*M links on level 0 and M links on levels > 0
+    /// 为每一层设置默认的概率
     void set_default_probas(int M, float levelMult);
 
     /// set nb of neighbors for this level (before adding anything)
@@ -158,13 +166,13 @@ struct HNSW {
 
     // methods that access the tree sizes
 
-    /// nb of neighbors for this level
+    /// nb of neighbors for this level, 这个level的neighbor数目
     int nb_neighbors(int layer_no) const;
 
     /// cumumlative nb up to (and excluding) this level
     int cum_nb_neighbors(int layer_no) const;
 
-    /// range of entries in the neighbors table of vertex no at layer_no
+    /// range of entries in the neighbors table of vertex no at layer_no, 根据point和level, 计算neighbor的偏移
     void neighbor_range(idx_t no, int layer_no, size_t* begin, size_t* end)
             const;
 
@@ -172,6 +180,7 @@ struct HNSW {
     explicit HNSW(int M = 32);
 
     /// pick a random level for a new point
+    /// 为每个点随机挑选一个level(1 based)
     int random_level();
 
     /// add n random levels to table (for debugging...)
@@ -195,7 +204,7 @@ struct HNSW {
             std::vector<omp_lock_t>& locks,
             VisitedTable& vt);
 
-    /// search interface for 1 point, single thread
+    /// search interface for 1 point, single thread, 单线程搜索优化
     HNSWStats search(
             DistanceComputer& qdis,
             ResultHandler<C>& res,
@@ -220,7 +229,7 @@ struct HNSW {
 
     int prepare_level_tab(size_t n, bool preset_levels = false);
 
-    static void shrink_neighbor_list(
+    static void shrink_neighbor_list( // 这里可能是它的裁边策略
             DistanceComputer& qdis,
             std::priority_queue<NodeDistFarther>& input,
             std::vector<NodeDistFarther>& output,

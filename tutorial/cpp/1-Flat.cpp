@@ -16,14 +16,14 @@ using idx_t = faiss::idx_t;
 
 int main() {
     int d = 64;      // dimension
-    int nb = 100000; // database size
-    int nq = 10000;  // nb of queries
+    int nb = 10000; // database size
+    int nq = 1000;  // nb of queries
 
-    std::mt19937 rng;
-    std::uniform_real_distribution<> distrib;
+    std::mt19937 rng; // random generator
+    std::uniform_real_distribution<> distrib; // 分布
 
-    float* xb = new float[d * nb];
-    float* xq = new float[d * nq];
+    float* xb = new float[d * nb]; // 训练数据 d * nb
+    float* xq = new float[d * nq]; // query数据 d * nq
 
     for (int i = 0; i < nb; i++) {
         for (int j = 0; j < d; j++)
@@ -42,7 +42,7 @@ int main() {
     index.add(nb, xb); // add vectors to the index
     printf("ntotal = %zd\n", index.ntotal);
 
-    int k = 4;
+    int k = 100;
 
     { // sanity check: search 5 first vectors of xb
         idx_t* I = new idx_t[k * 5];

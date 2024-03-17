@@ -239,7 +239,7 @@ ArrayInvertedLists::ArrayInvertedLists(size_t nlist, size_t code_size)
     codes.resize(nlist);
 }
 
-size_t ArrayInvertedLists::add_entries(
+size_t ArrayInvertedLists::add_entries( // 这里就是将id和vector -> ids和codes中
         size_t list_no,
         size_t n_entry,
         const idx_t* ids_in,

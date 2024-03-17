@@ -25,14 +25,17 @@ namespace faiss {
 struct DistanceComputer {
     /// called before computing distances. Pointer x should remain valid
     /// while operator () is called
+    /// 设置query
     virtual void set_query(const float* x) = 0;
 
     /// compute distance of vector i to current query
+    /// 计算query到vector i的距离
     virtual float operator()(idx_t i) = 0;
 
     /// compute distances of current query to 4 stored vectors.
     /// certain DistanceComputer implementations may benefit
     /// heavily from this.
+    /// 4批量计算距离
     virtual void distances_batch_4(
             const idx_t idx0,
             const idx_t idx1,
@@ -54,6 +57,7 @@ struct DistanceComputer {
     }
 
     /// compute distance between two stored vectors
+    /// 计算两个vector的距离
     virtual float symmetric_dis(idx_t i, idx_t j) = 0;
 
     virtual ~DistanceComputer() {}

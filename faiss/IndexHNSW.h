@@ -39,12 +39,15 @@ struct IndexHNSW : Index {
 
     ~IndexHNSW() override;
 
+    // 这里的add函数会实际将点add到HNSW结构中
     void add(idx_t n, const float* x) override;
 
     /// Trains the storage if needed
+    /// 这里就相当于实际的训练方法
+    /// HNSW不需要train, 直接插入点就可以
     void train(idx_t n, const float* x) override;
 
-    /// entry point for search
+    /// entry point for search, 从入口点进行搜索
     void search(
             idx_t n,
             const float* x,

@@ -21,9 +21,11 @@
 
 namespace faiss {
 
+// 这里code_size就是原生的size, 一个vector对应的size
 IndexFlat::IndexFlat(idx_t d, MetricType metric)
         : IndexFlatCodes(sizeof(float) * d, d, metric) {}
 
+// 这里的参数就是分开设置的
 void IndexFlat::search(
         idx_t n,
         const float* x,
@@ -31,17 +33,21 @@ void IndexFlat::search(
         float* distances,
         idx_t* labels,
         const SearchParameters* params) const {
+    // 获取selector
     IDSelector* sel = params ? params->sel : nullptr;
     FAISS_THROW_IF_NOT(k > 0);
 
     // we see the distances and labels as heaps
+    // 如果内积
     if (metric_type == METRIC_INNER_PRODUCT) {
         float_minheap_array_t res = {size_t(n), size_t(k), labels, distances};
         knn_inner_product(x, get_xb(), d, n, ntotal, &res, sel);
     } else if (metric_type == METRIC_L2) {
+        // 如果是L2范数
         float_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
         knn_L2sqr(x, get_xb(), d, n, ntotal, &res, nullptr, sel);
     } else if (is_similarity_metric(metric_type)) {
+        // 其它相似度指标
         float_minheap_array_t res = {size_t(n), size_t(k), labels, distances};
         knn_extra_metrics(
                 x, get_xb(), d, n, ntotal, metric_type, metric_arg, &res);
@@ -239,12 +245,15 @@ void IndexFlat::reconstruct(idx_t key, float* recons) const {
     memcpy(recons, &(codes[key * code_size]), code_size);
 }
 
+// 这里保留全精度数据
+// 所以vector的目的就是方便进行内存管理
 void IndexFlat::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
     if (n > 0) {
         memcpy(bytes, x, sizeof(float) * d * n);
     }
 }
 
+// 解码操作
 void IndexFlat::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
     if (n > 0) {
         memcpy(x, bytes, sizeof(float) * d * n);
@@ -373,7 +382,7 @@ FlatCodesDistanceComputer* IndexFlatL2::get_FlatCodesDistanceComputer() const {
         }
     }
 
-    return IndexFlat::get_FlatCodesDistanceComputer();
+    return IndexFlat::get_FlatCodesDistanceComputer(); // 可以理解这里是获取了Computer函数, 主要依据Metric
 }
 
 /***************************************************

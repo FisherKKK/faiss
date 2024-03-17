@@ -35,6 +35,7 @@ void Index::range_search(
 
 void Index::assign(idx_t n, const float* x, idx_t* labels, idx_t k) const {
     std::vector<float> distances(n * k);
+    // 搜索最近邻, 即每个x所在的聚类中心, 将id信息存储在label中
     search(n, x, k, distances.data(), labels);
 }
 

@@ -16,7 +16,9 @@
 
 namespace faiss {
 
-/** Index that stores the full vectors and performs exhaustive search */
+/** Index that stores the full vectors and performs exhaustive search
+ *  存储全精度数据, 进行枚举操作
+ * */
 struct IndexFlat : IndexFlatCodes {
     explicit IndexFlat(
             idx_t d, ///< dimensionality of the input vectors
@@ -55,6 +57,7 @@ struct IndexFlat : IndexFlatCodes {
             const idx_t* labels) const;
 
     // get pointer to the floating point data
+    // 获取浮点数数据
     float* get_xb() {
         return (float*)codes.data();
     }
@@ -67,6 +70,7 @@ struct IndexFlat : IndexFlatCodes {
     FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
 
     /* The stanadlone codec interface (just memcopies in this case) */
+    /* 重载sa_encode操作 */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;

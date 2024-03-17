@@ -32,9 +32,11 @@ namespace faiss {
  */
 struct Level1Quantizer {
     /// quantizer that maps vectors to inverted lists
+    /// 量化器
     Index* quantizer = nullptr;
 
     /// number of inverted lists
+    /// 倒排索引的列表数目
     size_t nlist = 0;
 
     /**
@@ -45,11 +47,13 @@ struct Level1Quantizer {
     char quantizer_trains_alone = 0;
     bool own_fields = false; ///< whether object owns the quantizer
 
+    /// 聚类的参数
     ClusteringParameters cp; ///< to override default clustering params
     /// to override index used during clustering
     Index* clustering_index = nullptr;
 
     /// Trains the quantizer and calls train_residual to train sub-quantizers
+    /// IVF训练过程的调用链 n -> train set size | x -> database
     void train_q1(
             size_t n,
             const float* x,

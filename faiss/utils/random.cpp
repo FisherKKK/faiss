@@ -150,13 +150,16 @@ void int64_rand_max(int64_t* x, size_t n, uint64_t max, int64_t seed) {
     }
 }
 
+// 进行随机permutation
 void rand_perm(int* perm, size_t n, int64_t seed) {
     for (size_t i = 0; i < n; i++)
         perm[i] = i;
 
     RandomGenerator rng(seed);
 
+    // 实现的思路就是采用随机数进行交换
     for (size_t i = 0; i + 1 < n; i++) {
+        // 总是向后交换
         int i2 = i + rng.rand_int(n - i);
         std::swap(perm[i], perm[i2]);
     }

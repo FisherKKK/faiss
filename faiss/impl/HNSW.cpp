@@ -49,12 +49,13 @@ int HNSW::cum_nb_neighbors(int layer_no) const {
 
 void HNSW::neighbor_range(idx_t no, int layer_no, size_t* begin, size_t* end)
         const {
-    size_t o = offsets[no];
-    *begin = o + cum_nb_neighbors(layer_no);
+    size_t o = offsets[no]; // 获取neighbor偏置
+    *begin = o + cum_nb_neighbors(layer_no); // 添加layer之后的neighbor偏置
     *end = o + cum_nb_neighbors(layer_no + 1);
 }
 
 HNSW::HNSW(int M) : rng(12345) {
+    // mL = 1.0 / log(M)
     set_default_probas(M, 1.0 / log(M));
     offsets.push_back(0);
 }
@@ -71,16 +72,16 @@ int HNSW::random_level() {
     // happens with exponentially low probability
     return assign_probas.size() - 1;
 }
-
+// 1. HNSW初始化的第一个函数
 void HNSW::set_default_probas(int M, float levelMult) {
     int nn = 0;
     cum_nneighbor_per_level.push_back(0);
-    for (int level = 0;; level++) {
+    for (int level = 0;; level++) { // 这里的概率相当于不断的递减,
         float proba = exp(-level / levelMult) * (1 - exp(-1 / levelMult));
         if (proba < 1e-9)
             break;
-        assign_probas.push_back(proba);
-        nn += level == 0 ? M * 2 : M;
+        assign_probas.push_back(proba); // 每一层的概率
+        nn += level == 0 ? M * 2 : M; // 累计每一层的边数
         cum_nneighbor_per_level.push_back(nn);
     }
 }
@@ -195,7 +196,7 @@ void HNSW::fill_with_random_links(size_t n) {
         }
     }
 }
-
+// 为每个点计算所在的level, 然后它的neighbor所处的offset, 因为之前已经累计过每一个level的邻居数目
 int HNSW::prepare_level_tab(size_t n, bool preset_levels) {
     size_t n0 = offsets.size() - 1;
 
@@ -203,19 +204,19 @@ int HNSW::prepare_level_tab(size_t n, bool preset_levels) {
         FAISS_ASSERT(n0 + n == levels.size());
     } else {
         FAISS_ASSERT(n0 == levels.size());
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++) { // 这里相当于为每个点预先挑选level
             int pt_level = random_level();
-            levels.push_back(pt_level + 1);
+            levels.push_back(pt_level + 1); // levels中就是存储每个点的level
         }
     }
 
-    int max_level = 0;
+    int max_level = 0; // 如下计算最大的level
     for (int i = 0; i < n; i++) {
         int pt_level = levels[i + n0] - 1;
         if (pt_level > max_level)
             max_level = pt_level;
-        offsets.push_back(offsets.back() + cum_nb_neighbors(pt_level + 1));
-        neighbors.resize(offsets.back(), -1);
+        offsets.push_back(offsets.back() + cum_nb_neighbors(pt_level + 1)); // 每一个点拥有的neighbors数目, 以及邻居所在的offset
+        neighbors.resize(offsets.back(), -1); // 调整neighbor的大小
     }
 
     return max_level;
@@ -236,15 +237,15 @@ void HNSW::shrink_neighbor_list(
         float dist_v1_q = v1.d;
 
         bool good = true;
-        for (NodeDistFarther v2 : output) {
-            float dist_v1_v2 = qdis.symmetric_dis(v2.id, v1.id);
+        for (NodeDistFarther v2 : output) { // 对已经连接邻居进行遍历, for all nh: dist(current, q) < dist(current, nh)
+            float dist_v1_v2 = qdis.symmetric_dis(v2.id, v1.id); // 计算current, nh的距离
 
-            if (dist_v1_v2 < dist_v1_q) {
+            if (dist_v1_v2 < dist_v1_q) { // 判断距离
                 good = false;
                 break;
             }
         }
-
+        // 如果足够好就push
         if (good) {
             output.push_back(v1);
             if (output.size() >= max_size) {
@@ -264,7 +265,7 @@ using NodeDistFarther = HNSW::NodeDistFarther;
  * Addition subroutines
  **************************************************************/
 
-/// remove neighbors from the list to make it smaller than max_size
+/// remove neighbors from the list to make it smaller than max_size, 这里就相当于裁边策略
 void shrink_neighbor_list(
         DistanceComputer& qdis,
         std::priority_queue<NodeDistCloser>& resultSet1,
@@ -272,23 +273,23 @@ void shrink_neighbor_list(
     if (resultSet1.size() < max_size) {
         return;
     }
-    std::priority_queue<NodeDistFarther> resultSet;
-    std::vector<NodeDistFarther> returnlist;
-
+    std::priority_queue<NodeDistFarther> resultSet; // 结果集
+    std::vector<NodeDistFarther> returnlist; // 返回列表
+    // 将resultSet1的内容放到resultSet
     while (resultSet1.size() > 0) {
         resultSet.emplace(resultSet1.top().d, resultSet1.top().id);
         resultSet1.pop();
     }
-
+    // 裁边策略, 将裁边后的结果放到returnlist中
     HNSW::shrink_neighbor_list(qdis, resultSet, returnlist, max_size);
-
+    // 裁边后的结果集, 加入到resultSet1, 返回出去
     for (NodeDistFarther curen2 : returnlist) {
         resultSet1.emplace(curen2.d, curen2.id);
     }
 }
 
 /// add a link between two elements, possibly shrinking the list
-/// of links to make room for it.
+/// of links to make room for it. 连边操作, src是源点, dest是目标点, 如果邻居的数目超出限制就会进行剪枝
 void add_link(
         HNSW& hnsw,
         DistanceComputer& qdis,
@@ -296,44 +297,44 @@ void add_link(
         storage_idx_t dest,
         int level) {
     size_t begin, end;
-    hnsw.neighbor_range(src, level, &begin, &end);
-    if (hnsw.neighbors[end - 1] == -1) {
+    hnsw.neighbor_range(src, level, &begin, &end); // 获取当前节点的邻居offset
+    if (hnsw.neighbors[end - 1] == -1) { // 存在room连边
         // there is enough room, find a slot to add it
         size_t i = end;
         while (i > begin) {
             if (hnsw.neighbors[i - 1] != -1)
                 break;
-            i--;
+            i--; // 找到一个可以添加的i
         }
-        hnsw.neighbors[i] = dest;
+        hnsw.neighbors[i] = dest; // 连边
         return;
     }
 
-    // otherwise we let them fight out which to keep
+    // otherwise we let them fight out which to keep, 这里相当于不存在空间连边
 
-    // copy to resultSet...
+    // copy to resultSet... 这里相当于将所有的邻居都计算一遍
     std::priority_queue<NodeDistCloser> resultSet;
     resultSet.emplace(qdis.symmetric_dis(src, dest), dest);
     for (size_t i = begin; i < end; i++) { // HERE WAS THE BUG
         storage_idx_t neigh = hnsw.neighbors[i];
         resultSet.emplace(qdis.symmetric_dis(src, neigh), neigh);
     }
-
+    // 这里相当于裁边
     shrink_neighbor_list(qdis, resultSet, end - begin);
 
     // ...and back
-    size_t i = begin;
+    size_t i = begin; // 重置起始点
     while (resultSet.size()) {
-        hnsw.neighbors[i++] = resultSet.top().id;
-        resultSet.pop();
+        hnsw.neighbors[i++] = resultSet.top().id; // 这里相当于将resultSet中的结果加入到neighbor中
+        resultSet.pop(); // 弹出
     }
-    // they may have shrunk more than just by 1 element
+    // they may have shrunk more than just by 1 element. 对于不够的点, 直接-1填充
     while (i < end) {
         hnsw.neighbors[i++] = -1;
     }
 }
 
-/// search neighbors on a single level, starting from an entry point
+/// search neighbors on a single level, starting from an entry point, 从入口点搜索, 进行单层最近邻搜索
 void search_neighbors_to_add(
         HNSW& hnsw,
         DistanceComputer& qdis,
@@ -343,40 +344,40 @@ void search_neighbors_to_add(
         int level,
         VisitedTable& vt) {
     // top is nearest candidate
-    std::priority_queue<NodeDistFarther> candidates;
+    std::priority_queue<NodeDistFarther> candidates; // 候选点的集合, 这里是一个最小堆吧
 
     NodeDistFarther ev(d_entry_point, entry_point);
     candidates.push(ev);
-    results.emplace(d_entry_point, entry_point);
-    vt.set(entry_point);
-
+    results.emplace(d_entry_point, entry_point); // 加入结果集
+    vt.set(entry_point); // 当前已经访问过的点
+    // 如果候选集不为空
     while (!candidates.empty()) {
         // get nearest
-        const NodeDistFarther& currEv = candidates.top();
+        const NodeDistFarther& currEv = candidates.top(); // 获取当前candidate中的最近邻
 
-        if (currEv.d > results.top().d) {
+        if (currEv.d > results.top().d) { // 如果candidate的最近邻大于result, 那么终止查找
             break;
         }
         int currNode = currEv.id;
         candidates.pop();
 
-        // loop over neighbors
+        // loop over neighbors, 遍历候选点的邻居
         size_t begin, end;
-        hnsw.neighbor_range(currNode, level, &begin, &end);
-        for (size_t i = begin; i < end; i++) {
+        hnsw.neighbor_range(currNode, level, &begin, &end); // 获取邻居的偏置
+        for (size_t i = begin; i < end; i++) { // 遍历所有的邻居加入到结果集
             storage_idx_t nodeId = hnsw.neighbors[i];
             if (nodeId < 0)
                 break;
-            if (vt.get(nodeId))
+            if (vt.get(nodeId)) // 如果当前节点已经被访问过
                 continue;
-            vt.set(nodeId);
+            vt.set(nodeId); // 设置已经访问过
 
             float dis = qdis(nodeId);
-            NodeDistFarther evE1(dis, nodeId);
-
-            if (results.size() < hnsw.efConstruction || results.top().d > dis) {
+            NodeDistFarther evE1(dis, nodeId); // 计算距离
+            // 相当于这里只处理距离更小的邻居, 否者就不管
+            if (results.size() < hnsw.efConstruction || results.top().d > dis) { // 结果集还可以加入(小于ef或者距离更小)
                 results.emplace(dis, nodeId);
-                candidates.emplace(dis, nodeId);
+                candidates.emplace(dis, nodeId); // 加入候选集
                 if (results.size() > hnsw.efConstruction) {
                     results.pop();
                 }
@@ -390,7 +391,7 @@ void search_neighbors_to_add(
  * Searching subroutines
  **************************************************************/
 
-/// greedily update a nearest vector at a given level
+/// greedily update a nearest vector at a given level, 在给定的level更新最近邻(搜索当前层的最近邻)
 void greedy_update_nearest(
         const HNSW& hnsw,
         DistanceComputer& qdis,
@@ -401,18 +402,18 @@ void greedy_update_nearest(
         storage_idx_t prev_nearest = nearest;
 
         size_t begin, end;
-        hnsw.neighbor_range(nearest, level, &begin, &end);
-        for (size_t i = begin; i < end; i++) {
+        hnsw.neighbor_range(nearest, level, &begin, &end); // 计算得到neighbor的begin和end
+        for (size_t i = begin; i < end; i++) { // 遍历当前nearest,在当前level的所有neighbor
             storage_idx_t v = hnsw.neighbors[i];
             if (v < 0)
                 break;
-            float dis = qdis(v);
-            if (dis < d_nearest) {
+            float dis = qdis(v); // 计算distance
+            if (dis < d_nearest) { // 更新nearest信息
                 nearest = v;
                 d_nearest = dis;
             }
         }
-        if (nearest == prev_nearest) {
+        if (nearest == prev_nearest) { // 如果nearest没有改变, 直接return
             return;
         }
     }
@@ -431,31 +432,31 @@ void HNSW::add_links_starting_from(
         omp_lock_t* locks,
         VisitedTable& vt) {
     std::priority_queue<NodeDistCloser> link_targets;
-
+    // 搜索当前点的最近邻
     search_neighbors_to_add(
             *this, ptdis, link_targets, nearest, d_nearest, level, vt);
 
-    // but we can afford only this many neighbors
+    // but we can afford only this many neighbors, 获取当前level允许的neighbor数目
     int M = nb_neighbors(level);
 
     ::faiss::shrink_neighbor_list(ptdis, link_targets, M);
 
     std::vector<storage_idx_t> neighbors;
     neighbors.reserve(link_targets.size());
-    while (!link_targets.empty()) {
+    while (!link_targets.empty()) { // 应该是将link_target进行连边
         storage_idx_t other_id = link_targets.top().id;
-        add_link(*this, ptdis, pt_id, other_id, level);
+        add_link(*this, ptdis, pt_id, other_id, level); // 这里是连正向边
         neighbors.push_back(other_id);
         link_targets.pop();
     }
 
-    omp_unset_lock(&locks[pt_id]);
+    omp_unset_lock(&locks[pt_id]); // 释放当前节点的锁
     for (storage_idx_t other_id : neighbors) {
-        omp_set_lock(&locks[other_id]);
-        add_link(*this, ptdis, other_id, pt_id, level);
+        omp_set_lock(&locks[other_id]); // 连边操作的时候锁住这个点(这是邻居点啊), 也就是对谁的邻居操作, 就锁上谁
+        add_link(*this, ptdis, other_id, pt_id, level); // 反向连边操作
         omp_unset_lock(&locks[other_id]);
     }
-    omp_set_lock(&locks[pt_id]);
+    omp_set_lock(&locks[pt_id]); // 设置当前节点的锁
 }
 
 /**************************************************************
@@ -470,12 +471,12 @@ void HNSW::add_with_locks(
         VisitedTable& vt) {
     //  greedy search on upper levels
 
-    storage_idx_t nearest;
+    storage_idx_t nearest; // 在upper level搜索最近邻
 #pragma omp critical
     {
         nearest = entry_point;
 
-        if (nearest == -1) {
+        if (nearest == -1) { // 没有入口点就设置这个点作为入口点, 同时设置max_level
             max_level = pt_level;
             entry_point = pt_id;
         }
@@ -485,23 +486,23 @@ void HNSW::add_with_locks(
         return;
     }
 
-    omp_set_lock(&locks[pt_id]);
+    omp_set_lock(&locks[pt_id]); // 为当前这个节点设置锁
 
     int level = max_level; // level at which we start adding neighbors
-    float d_nearest = ptdis(nearest);
-
+    float d_nearest = ptdis(nearest); // 计算当前点到nearest的距离
+    // upper的话我们直接搜最近邻即可, 采用贪心的策略, 在每一层搜索最近邻, 逐层向下
     for (; level > pt_level; level--) {
         greedy_update_nearest(*this, ptdis, level, nearest, d_nearest);
     }
-
+    // 到达了这个节点应该放置的层(以及更低的层), 这时候就需要连边了, 这里相当于搜点裁边都在里面
     for (; level >= 0; level--) {
         add_links_starting_from(
                 ptdis, pt_id, nearest, d_nearest, level, locks.data(), vt);
     }
 
-    omp_unset_lock(&locks[pt_id]);
+    omp_unset_lock(&locks[pt_id]); // 释放锁
 
-    if (pt_level > max_level) {
+    if (pt_level > max_level) { // 如果大于当前的最大level, 将这个点作为入口点
         max_level = pt_level;
         entry_point = pt_id;
     }
@@ -516,7 +517,7 @@ using MinimaxHeap = HNSW::MinimaxHeap;
 using Node = HNSW::Node;
 using C = HNSW::C;
 /** Do a BFS on the candidates list */
-
+// 从目前的candidate中进行BFS搜索
 int search_from_candidates(
         const HNSW& hnsw,
         DistanceComputer& qdis,
@@ -537,23 +538,23 @@ int search_from_candidates(
     const IDSelector* sel = params ? params->sel : nullptr;
 
     C::T threshold = res.threshold;
-    for (int i = 0; i < candidates.size(); i++) {
+    for (int i = 0; i < candidates.size(); i++) { // 对每一个candidate进行搜索, 加入到result中
         idx_t v1 = candidates.ids[i];
         float d = candidates.dis[i];
         FAISS_ASSERT(v1 >= 0);
         if (!sel || sel->is_member(v1)) {
-            if (d < threshold) {
+            if (d < threshold) { // 小于阈值加入到结果集中
                 if (res.add_result(d, v1)) {
                     threshold = res.threshold;
                 }
             }
         }
-        vt.set(v1);
+        vt.set(v1); // 设置已经访问过
     }
 
     int nstep = 0;
 
-    while (candidates.size() > 0) {
+    while (candidates.size() > 0) { // 首先拿出最小值, 然后依次进行扩展邻居
         float d0 = 0;
         int v0 = candidates.pop_min(&d0);
 
@@ -562,14 +563,14 @@ int search_from_candidates(
             // distances that are processed already that are smaller
             // than d0
 
-            int n_dis_below = candidates.count_below(d0);
-            if (n_dis_below >= efSearch) {
+            int n_dis_below = candidates.count_below(d0); // 计算比当前距离还要小的点的数目
+            if (n_dis_below >= efSearch) { // 这就说明了当前点不符合规则, 直接break掉
                 break;
             }
         }
 
         size_t begin, end;
-        hnsw.neighbor_range(v0, level, &begin, &end);
+        hnsw.neighbor_range(v0, level, &begin, &end); // 获取这个节点的neighbor offset
 
         // // baseline version
         // for (size_t j = begin; j < end; j++) {
@@ -592,14 +593,14 @@ int search_from_candidates(
         //     candidates.push(v1, d);
         // }
 
-        // the following version processes 4 neighbors at a time
+        // the following version processes 4 neighbors at a time, 如下版本是一次性处理4个neighbor, 采用预取函数
         size_t jmax = begin;
         for (size_t j = begin; j < end; j++) {
             int v1 = hnsw.neighbors[j];
             if (v1 < 0)
                 break;
 
-            prefetch_L2(vt.visited.data() + v1);
+            prefetch_L2(vt.visited.data() + v1); // 将这些数据预取
             jmax += 1;
         }
 
@@ -620,7 +621,7 @@ int search_from_candidates(
             candidates.push(idx, dis);
         };
 
-        for (size_t j = begin; j < jmax; j++) {
+        for (size_t j = begin; j < jmax; j++) { // 实际上的存在的neigbor
             int v1 = hnsw.neighbors[j];
 
             bool vget = vt.get(v1);
@@ -628,7 +629,7 @@ int search_from_candidates(
             saved_j[counter] = v1;
             counter += vget ? 0 : 1;
 
-            if (counter == 4) {
+            if (counter == 4) { // 4批量的计算
                 float dis[4];
                 qdis.distances_batch_4(
                         saved_j[0],
@@ -818,26 +819,26 @@ HNSWStats HNSW::search(
     if (entry_point == -1) {
         return stats;
     }
-    int k = extract_k_from_ResultHandler(res);
+    int k = extract_k_from_ResultHandler(res); // 多添一个参数得了
 
-    if (upper_beam == 1) {
+    if (upper_beam == 1) { // beam search = 1的时候, 每一层只有一个入口
         //  greedy search on upper levels
         storage_idx_t nearest = entry_point;
         float d_nearest = qdis(nearest);
-
-        for (int level = max_level; level >= 1; level--) {
+        // 在0 above搜
+        for (int level = max_level; level >= 1; level--) { // 在每一层更新最近邻(0 above)
             greedy_update_nearest(*this, qdis, level, nearest, d_nearest);
         }
-
+        // 在0 搜
         int ef = std::max(efSearch, k);
-        if (search_bounded_queue) { // this is the most common branch
+        if (search_bounded_queue) { // this is the most common branch, 维护k-efsearch堆
             MinimaxHeap candidates(ef);
 
             candidates.push(nearest, d_nearest);
-
+            // 从candidate中进行搜索
             search_from_candidates(
                     *this, qdis, res, candidates, vt, stats, 0, 0, params);
-        } else {
+        } else { // 非bound queue
             std::priority_queue<Node> top_candidates =
                     search_from_candidate_unbounded(
                             *this,
@@ -862,7 +863,7 @@ HNSWStats HNSW::search(
 
         vt.advance();
 
-    } else {
+    } else { // 对于beam search
         int candidates_size = upper_beam;
         MinimaxHeap candidates(candidates_size);
 
@@ -987,7 +988,7 @@ void HNSW::permute_entries(const idx_t* map) {
 /**************************************************************
  * MinimaxHeap
  **************************************************************/
-
+/// 堆的push操作, 这里如果用在搜索过程, 应该会使用大根堆
 void HNSW::MinimaxHeap::push(storage_idx_t i, float v) {
     if (k == n) {
         if (v >= dis[0])

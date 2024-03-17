@@ -19,6 +19,7 @@ namespace faiss {
 /// Most algorithms support both inner product and L2, with the flat
 /// (brute-force) indices supporting additional metric types for vector
 /// comparison.
+/// 这里直接使用enum作为枚举类, 没有使用enum class
 enum MetricType {
     METRIC_INNER_PRODUCT = 0, ///< maximum inner product search
     METRIC_L2 = 1,            ///< squared L2 search
@@ -36,6 +37,7 @@ enum MetricType {
 };
 
 /// all vector indices are this type
+/// 索引的类型
 using idx_t = int64_t;
 
 /// this function is used to distinguish between min and max indexes since

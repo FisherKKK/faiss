@@ -44,9 +44,9 @@ int main() {
     faiss::IndexFlatL2 quantizer(d); // the other index
     faiss::IndexIVFFlat index(&quantizer, d, nlist);
     assert(!index.is_trained);
-    index.train(nb, xb);
+    index.train(nb, xb); // 这里的训练相当于找到对应的质心
     assert(index.is_trained);
-    index.add(nb, xb);
+    index.add(nb, xb); // 这里是添加每一个点
 
     { // search xq
         idx_t* I = new idx_t[k * nq];

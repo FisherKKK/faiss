@@ -21,11 +21,17 @@ IndexFlatCodes::IndexFlatCodes(size_t code_size, idx_t d, MetricType metric)
 IndexFlatCodes::IndexFlatCodes() : code_size(0) {}
 
 void IndexFlatCodes::add(idx_t n, const float* x) {
+    // 采用宏的方式进行异常处理
     FAISS_THROW_IF_NOT(is_trained);
+
+    // 如果向量数目为0
     if (n == 0) {
         return;
     }
+
+    // resize vector, 这里可以防止vector的push过程的拷贝损耗
     codes.resize((ntotal + n) * code_size);
+    // 编码过程, 这里实际上因此多态的问题会被子类实现
     sa_encode(n, x, codes.data() + (ntotal * code_size));
     ntotal += n;
 }
@@ -45,7 +51,9 @@ size_t IndexFlatCodes::remove_ids(const IDSelector& sel) {
         if (sel.is_member(i)) {
             // should be removed
         } else {
+            // 未删除的向量
             if (i > j) {
+                // 向量移动
                 memmove(&codes[code_size * j],
                         &codes[code_size * i],
                         code_size);
@@ -53,9 +61,11 @@ size_t IndexFlatCodes::remove_ids(const IDSelector& sel) {
             j++;
         }
     }
+    // 移除的元素数目
     size_t nremove = ntotal - j;
     if (nremove > 0) {
         ntotal = j;
+        // 进行resize操作
         codes.resize(ntotal * code_size);
     }
     return nremove;
@@ -103,6 +113,7 @@ CodePacker* IndexFlatCodes::get_CodePacker() const {
     return new CodePackerFlat(code_size);
 }
 
+// 按照perm重排数据
 void IndexFlatCodes::permute_entries(const idx_t* perm) {
     std::vector<uint8_t> new_codes(codes.size());
 

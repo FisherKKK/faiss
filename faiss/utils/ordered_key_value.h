@@ -38,19 +38,24 @@ inline T cmax_nextafter(T x);
 
 // traits of minheaps = heaps where the minimum value is stored on top
 // useful to find the *max* values of an array
+// 相当于这是小根堆
 template <typename T_, typename TI_>
 struct CMin {
     typedef T_ T;
     typedef TI_ TI;
     typedef CMax<T_, TI_> Crev; // reference to reverse comparison
+    // 实现了cmp函数
     inline static bool cmp(T a, T b) {
         return a < b;
     }
     // Similar to cmp(), but also breaks ties
     // by comparing the second pair of arguments.
+    // 比较第二个元素(除了第一个元素之外)
     inline static bool cmp2(T a1, T b1, TI a2, TI b2) {
         return (a1 < b1) || ((a1 == b1) && (a2 < b2));
     }
+
+    // 最小值
     inline static T neutral() {
         return std::numeric_limits<T>::lowest();
     }
@@ -61,6 +66,7 @@ struct CMin {
     }
 };
 
+// 相当于T_是实际数据类型, TI_是实际的label的类型
 template <typename T_, typename TI_>
 struct CMax {
     typedef T_ T;
@@ -83,6 +89,8 @@ struct CMax {
     }
 };
 
+// next_after的模板实现
+// 如果采用模板的方式就不会存在多次定义的问题
 template <>
 inline float cmin_nextafter<float>(float x) {
     return std::nextafterf(x, -HUGE_VALF);

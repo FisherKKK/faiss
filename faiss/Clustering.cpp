@@ -29,6 +29,7 @@ namespace faiss {
 
 Clustering::Clustering(int d, int k) : d(d), k(k) {}
 
+// 数据集的维度d, 聚类的数目k, 聚类的参数cp
 Clustering::Clustering(int d, int k, const ClusteringParameters& cp)
         : ClusteringParameters(cp), d(d), k(k) {}
 
@@ -74,6 +75,7 @@ void Clustering::train(
 
 namespace {
 
+// 采样进行kmeans计算
 idx_t subsample_training_set(
         const Clustering& clus,
         idx_t nx,
@@ -89,9 +91,11 @@ idx_t subsample_training_set(
     }
     std::vector<int> perm(nx);
     rand_perm(perm.data(), nx, clus.seed);
-    nx = clus.k * clus.max_points_per_centroid;
-    uint8_t* x_new = new uint8_t[nx * line_size];
-    *x_out = x_new;
+    nx = clus.k * clus.max_points_per_centroid; // 总共采样的数据数目
+    uint8_t* x_new = new uint8_t[nx * line_size]; // 所有数据的字节数
+    *x_out = x_new; // 输出结果
+
+    // 相等于shuffle数据
     for (idx_t i = 0; i < nx; i++) {
         memcpy(x_new + i * line_size, x + perm[i] * line_size, line_size);
     }
@@ -104,6 +108,7 @@ idx_t subsample_training_set(
     } else {
         *weights_out = nullptr;
     }
+    // 返回采样后的数据
     return nx;
 }
 
@@ -112,9 +117,9 @@ idx_t subsample_training_set(
  * @param x            training vectors, size n * code_size (from codec)
  * @param codec        how to decode the vectors (if NULL then cast to float*)
  * @param weights      per-training vector weight, size n (or NULL)
- * @param assign       nearest centroid for each training vector, size n
- * @param k_frozen     do not update the k_frozen first centroids
- * @param centroids    centroid vectors (output only), size k * d
+ * @param assign       nearest centroid for each training vector, size n, 最近邻的点
+ * @param k_frozen     do not update the k_frozen first centroids, 不需要更新的点
+ * @param centroids    centroid vectors (output only), size k * d,
  * @param hassign      histogram of assignments per centroid (size k),
  *                     should be 0 on input
  *
@@ -134,16 +139,17 @@ void compute_centroids(
     k -= k_frozen;
     centroids += k_frozen * d;
 
-    memset(centroids, 0, sizeof(*centroids) * d * k);
+    memset(centroids, 0, sizeof(*centroids) * d * k); //
 
     size_t line_size = codec ? codec->sa_code_size() : d * sizeof(float);
-
+// 这里并发的思路采用按照质心进行分配防止冲突
 #pragma omp parallel
     {
         int nt = omp_get_num_threads();
         int rank = omp_get_thread_num();
 
         // this thread is taking care of centroids c0:c1
+        // 每个线程负责处理的中心点
         size_t c0 = (k * rank) / nt;
         size_t c1 = (k * (rank + 1)) / nt;
         std::vector<float> decode_buffer(d);
@@ -151,11 +157,13 @@ void compute_centroids(
         for (size_t i = 0; i < n; i++) {
             int64_t ci = assign[i];
             assert(ci >= 0 && ci < k + k_frozen);
-            ci -= k_frozen;
+            ci -= k_frozen; //
             if (ci >= c0 && ci < c1) {
+                // 当先这个中心的id, c就是当前的质心
                 float* c = centroids + ci * d;
                 const float* xi;
                 if (!codec) {
+                    // 获得这个向量
                     xi = reinterpret_cast<const float*>(x + i * line_size);
                 } else {
                     float* xif = decode_buffer.data();
@@ -169,15 +177,15 @@ void compute_centroids(
                         c[j] += xi[j] * w;
                     }
                 } else {
-                    hassign[ci] += 1.0;
+                    hassign[ci] += 1.0; // 每个位置的直方图
                     for (size_t j = 0; j < d; j++) {
-                        c[j] += xi[j];
+                        c[j] += xi[j]; // 更新的质心的值
                     }
                 }
             }
         }
     }
-
+// 并行的循环, 这里相当于计算均值
 #pragma omp parallel for
     for (idx_t ci = 0; ci < k; ci++) {
         if (hassign[ci] == 0) {
@@ -199,6 +207,8 @@ void compute_centroids(
  * It works by slightly changing the centroids to make 2 clusters from
  * a single one. Takes the same arguments as compute_centroids.
  *
+ * 将较大的质心区域分割为较小的, 采用直接概率寻找, 进行异步变换 -> 平分cluster中的节点数
+ *
  * @return           nb of spliting operations (larger is worse)
  */
 int split_clusters(
@@ -217,6 +227,7 @@ int split_clusters(
     for (size_t ci = 0; ci < k; ci++) {
         if (hassign[ci] == 0) { /* need to redefine a centroid */
             size_t cj;
+            // 分裂的概率
             for (cj = 0; true; cj = (cj + 1) % k) {
                 /* probability to pick this cluster for split */
                 float p = (hassign[cj] - 1.0) / (float)(n - k);
@@ -225,11 +236,13 @@ int split_clusters(
                     break; /* found our cluster to be split */
                 }
             }
+            // cj 分裂到 -> ci
             memcpy(centroids + ci * d,
                    centroids + cj * d,
                    sizeof(*centroids) * d);
 
             /* small symmetric pertubation */
+            // 异步枚举, 也就是让两个质心变得不同
             for (size_t j = 0; j < d; j++) {
                 if (j % 2 == 0) {
                     centroids[ci * d + j] *= 1 + EPS;
@@ -284,6 +297,7 @@ void Clustering::train_encoded(
         // Check for NaNs in input data. Normally it is the user's
         // responsibility, but it may spare us some hard-to-debug
         // reports.
+        // 这里的含义就是说如果没有使用解码器, 那么原本就是一个原始的vector
         const float* x = reinterpret_cast<const float*>(x_in);
         for (size_t i = 0; i < nx * d; i++) {
             FAISS_THROW_IF_NOT_MSG(
@@ -294,18 +308,19 @@ void Clustering::train_encoded(
     const uint8_t* x = x_in;
     std::unique_ptr<uint8_t[]> del1;
     std::unique_ptr<float[]> del3;
-    size_t line_size = codec ? codec->sa_code_size() : sizeof(float) * d;
+    size_t line_size = codec ? codec->sa_code_size() : sizeof(float) * d; // 一个vector的大小
 
+    // 如果点的数目足够多, 那么需要采样训练
     if (nx > k * max_points_per_centroid) {
         uint8_t* x_new;
         float* weights_new;
         nx = subsample_training_set(
                 *this, nx, x, line_size, weights, &x_new, &weights_new);
-        del1.reset(x_new);
-        x = x_new;
+        del1.reset(x_new); // del设置为采样后的数据
+        x = x_new; // 又将这个指针指给别人
         del3.reset(weights_new);
         weights = weights_new;
-    } else if (nx < k * min_points_per_centroid) {
+    } else if (nx < k * min_points_per_centroid) { // 如果点的数目少, 那么每个聚类点的数目更少
         fprintf(stderr,
                 "WARNING clustering %" PRId64
                 " points to %zd centroids: "
@@ -360,8 +375,8 @@ void Clustering::train_encoded(
     // remember best iteration for redo
     bool lower_is_better = !is_similarity_metric(index.metric_type);
     float best_obj = lower_is_better ? HUGE_VALF : -HUGE_VALF;
-    std::vector<ClusteringIterationStats> best_iteration_stats;
-    std::vector<float> best_centroids;
+    std::vector<ClusteringIterationStats> best_iteration_stats; // 迭代状态参数
+    std::vector<float> best_centroids; // 最后的质心
 
     // support input centroids
 
@@ -384,6 +399,7 @@ void Clustering::train_encoded(
     t0 = getmillisecs();
 
     // temporary buffer to decode vectors during the optimization
+    // 解码后的dataset
     std::vector<float> decode_buffer(codec ? d * decode_block_size : 0);
 
     for (int redo = 0; redo < nredo; redo++) {
@@ -392,12 +408,14 @@ void Clustering::train_encoded(
         }
 
         // initialize (remaining) centroids with random points from the dataset
+        // 随机初始化中心点数目为k, 维度为d
         centroids.resize(d * k);
         std::vector<int> perm(nx);
 
         rand_perm(perm.data(), nx, seed + 1 + redo * 15486557L);
 
         if (!codec) {
+            // 如果不需要解码器那么就直接将数据copy过去
             for (int i = n_input_centroids; i < k; i++) {
                 memcpy(&centroids[i * d], x + perm[i] * line_size, line_size);
             }
@@ -407,6 +425,7 @@ void Clustering::train_encoded(
             }
         }
 
+        // 处理质心点, 相当于对质心点进行的一些正则化操作
         post_process_centroids();
 
         // prepare the index
@@ -419,21 +438,23 @@ void Clustering::train_encoded(
             index.train(k, centroids.data());
         }
 
-        index.add(k, centroids.data());
+        index.add(k, centroids.data()); // 载入中心点数据
 
         // k-means iterations
 
         float obj = 0;
+        // 进行n轮迭代进行训练
         for (int i = 0; i < niter; i++) {
             double t0s = getmillisecs();
 
             if (!codec) {
+                // 对这些sample的节点搜索最近邻的中心
                 index.search(
                         nx,
                         reinterpret_cast<const float*>(x),
                         1,
-                        dis.get(),
-                        assign.get());
+                        dis.get(),  // 数据的距离
+                        assign.get()); // 数据的标签
             } else {
                 // search by blocks of decode_block_size vectors
                 size_t code_size = codec->sa_code_size();
@@ -466,6 +487,7 @@ void Clustering::train_encoded(
             std::vector<float> hassign(k);
 
             size_t k_frozen = frozen_centroids ? n_input_centroids : 0;
+            // 计算质心, 采用多线程记录每个质心的数目, 接着使用均值计算每个质心
             compute_centroids(
                     d,
                     k,
@@ -478,6 +500,8 @@ void Clustering::train_encoded(
                     hassign.data(),
                     centroids.data());
 
+            // hassign记录了每个center中的点的数目
+            // centroid是均值中心点
             int nsplit = split_clusters(
                     d, k, nx, k_frozen, hassign.data(), centroids.data());
 

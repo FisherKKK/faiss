@@ -18,6 +18,7 @@
 namespace faiss {
 
 /** Encapsulates a set of ids to handle. */
+/** 需要处理的id集合 **/
 struct IDSelector {
     virtual bool is_member(idx_t id) const = 0;
     virtual ~IDSelector() {}

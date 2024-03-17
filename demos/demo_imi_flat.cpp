@@ -27,13 +27,16 @@ int main() {
     double t0 = elapsed();
 
     // dimension of the vectors to index
+    // 数据维度
     int d = 128;
 
     // size of the database we plan to index
+    // 数据集的大小
     size_t nb = 1000 * 1000;
 
     // make a set of nt training vectors in the unit cube
     // (could be the database)
+    // 训练集的大小
     size_t nt = 100 * 1000;
 
     //---------------------------------------------------------------

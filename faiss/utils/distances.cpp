@@ -68,6 +68,8 @@ void fvec_norms_L2(
     }
 }
 
+// 采用omp计算范数
+// 结果保存在nr中, 从x中进行计算, 维度大小为d, 一共nx个向量
 void fvec_norms_L2sqr(
         float* __restrict nr,
         const float* __restrict x,
@@ -175,12 +177,14 @@ void exhaustive_L2sqr_seq(
         size_t ny,
         BlockResultHandler& res,
         const IDSelector* sel = nullptr) {
+    // 使用了类内的struct
     using SingleResultHandler =
             typename BlockResultHandler::SingleResultHandler;
     int nt = std::min(int(nx), omp_get_max_threads());
 
     FAISS_ASSERT(use_sel == (sel != nullptr));
 
+    // 这里就是采用多线程进行计算
 #pragma omp parallel num_threads(nt)
     {
         SingleResultHandler resi(res);
@@ -188,15 +192,16 @@ void exhaustive_L2sqr_seq(
         for (int64_t i = 0; i < nx; i++) {
             const float* x_i = x + i * d;
             const float* y_j = y;
-            resi.begin(i);
+            resi.begin(i); // 表示对query i进行处理
             for (size_t j = 0; j < ny; j++, y_j += d) {
                 if (use_sel && !sel->is_member(j)) {
                     continue;
                 }
+                // 添加到结果中
                 float disij = fvec_L2sqr(x_i, y_j, d);
                 resi.add_result(disij, j);
             }
-            resi.end();
+            resi.end(); // 表示当前query i结束
         }
     }
 }
@@ -258,6 +263,7 @@ void exhaustive_inner_product_blas(
 
 // distance correction is an operator that can be applied to transform
 // the distances
+// 这里采用的计算方式为 |x - y|^2 = x^2 + y^2 - 2xy
 template <class BlockResultHandler>
 void exhaustive_L2sqr_blas_default_impl(
         const float* x,
@@ -272,6 +278,7 @@ void exhaustive_L2sqr_blas_default_impl(
         return;
 
     /* block sizes */
+    // 批量计算的size
     const size_t bs_x = distance_compute_blas_query_bs;
     const size_t bs_y = distance_compute_blas_database_bs;
     // const size_t bs_x = 16, bs_y = 16;
@@ -279,6 +286,7 @@ void exhaustive_L2sqr_blas_default_impl(
     std::unique_ptr<float[]> x_norms(new float[nx]);
     std::unique_ptr<float[]> del2;
 
+    // 计算范数保存在x_norms中
     fvec_norms_L2sqr(x_norms.get(), x, d, nx);
 
     if (!y_norms) {
@@ -288,18 +296,22 @@ void exhaustive_L2sqr_blas_default_impl(
         y_norms = y_norms2;
     }
 
+    // 采用批量进行计算
     for (size_t i0 = 0; i0 < nx; i0 += bs_x) {
         size_t i1 = i0 + bs_x;
         if (i1 > nx)
             i1 = nx;
 
+        /// 批量计算开始
         res.begin_multiple(i0, i1);
 
+        /// 批量data_set
         for (size_t j0 = 0; j0 < ny; j0 += bs_y) {
             size_t j1 = j0 + bs_y;
             if (j1 > ny)
                 j1 = ny;
             /* compute the actual dot products */
+            // 这里本质上就是批量计算inner product
             {
                 float one = 1, zero = 0;
                 FINTEGER nyi = j1 - j0, nxi = i1 - i0, di = d;
@@ -319,8 +331,11 @@ void exhaustive_L2sqr_blas_default_impl(
             }
 #pragma omp parallel for
             for (int64_t i = i0; i < i1; i++) {
+                // 获得对应的ip
+                // ip_block : bs_x * bs_y的内积矩阵
                 float* ip_line = ip_block.get() + (i - i0) * (j1 - j0);
 
+                // 计算L2范数
                 for (size_t j = j0; j < j1; j++) {
                     float ip = *ip_line;
                     float dis = x_norms[i] + y_norms[j] - 2 * ip;
@@ -334,6 +349,7 @@ void exhaustive_L2sqr_blas_default_impl(
                     ip_line++;
                 }
             }
+            // 假如到结果集当中
             res.add_results(j0, j1, ip_block.get());
         }
         res.end_multiple();
@@ -341,6 +357,7 @@ void exhaustive_L2sqr_blas_default_impl(
     }
 }
 
+// 采用blas进行L2范数的计算
 template <class BlockResultHandler>
 void exhaustive_L2sqr_blas(
         const float* x,
@@ -614,8 +631,10 @@ void knn_L2sqr_select(
         exhaustive_L2sqr_seq<BlockResultHandler, true>(
                 x, y, d, nx, ny, res, sel);
     } else if (nx < distance_compute_blas_threshold) {
+        // 采用直接暴力计算
         exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
     } else {
+        // 采用blas simd计算, 这里采用的是|x - y|^2 = x^2 + y^2 - 2xy进行计算
         exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norm2);
     }
 }
@@ -706,6 +725,10 @@ void knn_inner_product(
     knn_inner_product(x, y, d, nx, ny, res->k, res->val, res->ids, sel);
 }
 
+/**  knn_L2sqr的实现函数:
+ *      x -> query | y-> dataset | d -> dimension | nx -> x_size | ny -> y_size |
+ *      k -> top k | vals -> output distance | ids -> output id |
+ */
 void knn_L2sqr(
         const float* x,
         const float* y,
@@ -718,6 +741,7 @@ void knn_L2sqr(
         const float* y_norm2,
         const IDSelector* sel) {
     int64_t imin = 0;
+    // 这里相当于是下转, 判断是否为null
     if (auto selr = dynamic_cast<const IDSelectorRange*>(sel)) {
         imin = std::max(selr->imin, int64_t(0));
         int64_t imax = std::min(selr->imax, int64_t(ny));
@@ -729,13 +753,17 @@ void knn_L2sqr(
         knn_L2sqr_by_idx(x, y, sela->ids, d, nx, sela->n, k, vals, ids, 0);
         return;
     }
+    // 如果是top1
     if (k == 1) {
+        // 相当于Top1
         Top1BlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids);
         knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
     } else if (k < distance_compute_min_k_reservoir) {
+        // 相当于使用Heap Block
         HeapBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
         knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
     } else {
+        // 这里使用水库Block
         ReservoirBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
         knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
     }
@@ -748,6 +776,7 @@ void knn_L2sqr(
     }
 }
 
+//  knn最近邻搜索 -> L2sqrt
 void knn_L2sqr(
         const float* x,
         const float* y,

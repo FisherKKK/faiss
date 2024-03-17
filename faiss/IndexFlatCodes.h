@@ -18,18 +18,24 @@ namespace faiss {
 struct CodePacker;
 
 /** Index that encodes all vectors as fixed-size codes (size code_size). Storage
- * is in the codes vector */
+ * is in the codes vector
+ * 将所有的vector编码成固定code_size的code */
 struct IndexFlatCodes : Index {
     size_t code_size;
 
     /// encoded dataset, size ntotal * code_size
+    /// 存储每个vector对应的code
+    /// code_size是每个point对应的大小
     std::vector<uint8_t> codes;
 
+    // 默认构造函数
     IndexFlatCodes();
 
+    // 有参构造器
     IndexFlatCodes(size_t code_size, idx_t d, MetricType metric = METRIC_L2);
 
     /// default add uses sa_encode
+    /// 默认add vector, 使用override
     void add(idx_t n, const float* x) override;
 
     void reset() override;

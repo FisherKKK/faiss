@@ -40,7 +40,9 @@ namespace faiss {
 
 /// Forward declarations see impl/AuxIndexStructures.h, impl/IDSelector.h and
 /// impl/DistanceComputer.h
+/// 这里使用前向声明, 相当于这里防止循环依赖
 struct IDSelector;
+// TODO
 struct RangeSearchResult;
 struct DistanceComputer;
 
@@ -48,11 +50,14 @@ struct DistanceComputer;
  *
  * Sub-classes with additional search parameters should inherit this class.
  * Ownership of the object fields is always to the caller.
+ * 查询参数类, 相当于查询的参数可以放在这个类里面
  */
 struct SearchParameters {
     /// if non-null, only these IDs will be considered during search.
+    /// 查询时考虑的ID
     IDSelector* sel = nullptr;
     /// make sure we can dynamic_cast this
+    ///
     virtual ~SearchParameters() {}
 };
 
@@ -60,13 +65,15 @@ struct SearchParameters {
  *
  * All vectors provided at add or search time are 32-bit float arrays,
  * although the internal representation may vary.
+ *
+ * 索引抽象结构, 可以存在add和search方法, 以32-float array
  */
 struct Index {
     using component_t = float;
     using distance_t = float;
 
-    int d;        ///< vector dimension
-    idx_t ntotal; ///< total nb of indexed vectors
+    int d;        ///< vector dimension,  vector的维度
+    idx_t ntotal; ///< total nb of indexed vectors, vector的数目
     bool verbose; ///< verbosity level
 
     /// set if the Index does not require training, or if training is
@@ -74,9 +81,11 @@ struct Index {
     bool is_trained;
 
     /// type of metric this index uses for search
+    /// metric的类型
     MetricType metric_type;
-    float metric_arg; ///< argument of the metric type
+    float metric_arg; ///< argument of the metric type, 当使用L_P的时候参数
 
+    /// 显式构造器 + 默认形参
     explicit Index(idx_t d = 0, MetricType metric = METRIC_L2)
             : d(d),
               ntotal(0),
@@ -85,9 +94,11 @@ struct Index {
               metric_type(metric),
               metric_arg(0) {}
 
+    // 如果存在至少一个virtual函数, 那么析构函数必须要virtual
     virtual ~Index();
 
     /** Perform training on a representative set of vectors
+     * 训练的虚函数
      *
      * @param n      nb of training vectors
      * @param x      training vecors, size n * d
@@ -99,6 +110,8 @@ struct Index {
      * Vectors are implicitly assigned labels ntotal .. ntotal + n - 1
      * This function slices the input vectors in chunks smaller than
      * blocksize_add and calls add_core.
+     * add vector, 数目为n
+     *
      * @param n      number of vectors
      * @param x      input matrix, size n * d
      */
@@ -108,6 +121,7 @@ struct Index {
      *
      * The default implementation fails with an assertion, as it is
      * not supported by all indexes.
+     * 指定id add vector, 是一个纯虚函数
      *
      * @param n         number of vectors
      * @param x         input vectors, size n * d
@@ -116,6 +130,9 @@ struct Index {
     virtual void add_with_ids(idx_t n, const float* x, const idx_t* xids);
 
     /** query n vectors of dimension d to the index.
+     *
+     * 查询n个vector, 维度为d, 返回最多k个, distance是n * k距离, label是n * k的标签
+     * param是查询的参数
      *
      * return at most k vectors. If there are not enough results for a
      * query, the result array is padded with -1s.
@@ -139,6 +156,8 @@ struct Index {
      * return all vectors with distance < radius. Note that many
      * indexes do not implement the range_search (only the k-NN search
      * is mandatory).
+     *
+     * 进行范围查询, 返回距离在radius以内的vector
      *
      * @param n           number of vectors
      * @param x           input vectors to search, size n * d
@@ -164,15 +183,18 @@ struct Index {
             const;
 
     /// removes all elements from the database.
+    /// 移除所有的元素
     virtual void reset() = 0;
 
     /** removes IDs from the index. Not supported by all
      * indexes. Returns the number of elements removed.
+     * 删除ids
      */
     virtual size_t remove_ids(const IDSelector& sel);
 
     /** Reconstruct a stored vector (or an approximation if lossy coding)
      *
+     * 重建key对应的索引
      * this function may not be defined for some indexes
      * @param key         id of the vector to reconstruct
      * @param recons      reconstucted vector (size d)
