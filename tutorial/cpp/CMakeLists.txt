@@ -21,3 +21,6 @@ target_link_libraries(5-Multiple-GPUs PRIVATE faiss)
 
 add_executable(6-IndexHNSW EXCLUDE_FROM_ALL 6-IndexHNSW.cpp)
 target_link_libraries(6-IndexHNSW PRIVATE faiss)
+
+add_executable(7-IndexNSG EXCLUDE_FROM_ALL 7-IndexNSG.cpp)
+target_link_libraries(7-IndexNSG PRIVATE faiss)
