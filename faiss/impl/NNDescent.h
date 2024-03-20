@@ -88,6 +88,9 @@ struct Nhood {
 
 } // namespace nndescent
 
+/** TODO KNNG构建过程的算法, 但是目前不知道什么意思
+ *
+ */
 struct NNDescent {
     using storage_idx_t = int;
 
@@ -97,7 +100,7 @@ struct NNDescent {
 
     ~NNDescent();
 
-    void build(DistanceComputer& qdis, const int n, bool verbose);
+    void build(DistanceComputer& qdis, const int n, bool verbose); // 采用NNDescent构建KNNG
 
     void search(
             DistanceComputer& qdis,
@@ -134,16 +137,16 @@ struct NNDescent {
 
     bool has_built = false;
 
-    int S = 10;  // number of sample neighbors to be updated for each node
-    int R = 100; // size of reverse links, 0 means the reverse links will not be
+    int S = 10;  // number of sample neighbors to be updated for each node, 每个节点采用一定数目的邻居进行更新
+    int R = 100; // size of reverse links, 0 means the reverse links will not be, 逆向边的数目
                  // used
-    int iter = 10;          // number of iterations to iterate over
+    int iter = 10;          // number of iterations to iterate over, 迭代次数
     int search_L = 0;       // size of candidate pool in searching
     int random_seed = 2021; // random seed for generators
 
     int K; // K in KNN graph
     int d; // dimensions
-    int L; // size of the candidate pool in building
+    int L; // size of the candidate pool in building, 构建候选池的大小
 
     int ntotal = 0;
 

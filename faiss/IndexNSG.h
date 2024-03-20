@@ -40,6 +40,7 @@ struct IndexNSG : Index {
     /// indicate how to build a knn graph
     /// - 0: build NSG with brute force search
     /// - 1: build NSG with NNDescent
+    /// 构建NSG的方式
     char build_type = 0;
 
     /// parameters for nndescent

@@ -18,7 +18,9 @@
 namespace faiss {
 
 /** The NNDescent index is a normal random-access index with an NNDescent
- * link structure built on top */
+ * link structure built on top
+ * TODO: 这个似乎是构建KNNG的一种方法
+ */
 
 struct IndexNNDescent : Index {
     // internal storage of vectors (32 bits)

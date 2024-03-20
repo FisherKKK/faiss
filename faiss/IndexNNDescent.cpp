@@ -194,10 +194,10 @@ void IndexNNDescent::add(idx_t n, const float* x) {
                 "multiple insertions would lead to re-building the index");
     }
 
-    storage->add(n, x);
+    storage->add(n, x); // 首先添加到storage中
     ntotal = storage->ntotal;
 
-    std::unique_ptr<DistanceComputer> dis(storage_distance_computer(storage));
+    std::unique_ptr<DistanceComputer> dis(storage_distance_computer(storage)); // 获取距离计算函数
     nndescent.build(*dis, ntotal, verbose);
 }
 
