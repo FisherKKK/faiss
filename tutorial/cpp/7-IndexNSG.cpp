@@ -16,7 +16,7 @@ using idx_t = faiss::idx_t;
 
 int main() {
     int d = 64;      // dimension
-    int nb = 100000; // database size
+    int nb = 10000; // database size
     int nq = 10000;  // nb of queries
 
     std::mt19937 rng;

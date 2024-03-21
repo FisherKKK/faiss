@@ -198,7 +198,7 @@ void IndexNNDescent::add(idx_t n, const float* x) {
     ntotal = storage->ntotal;
 
     std::unique_ptr<DistanceComputer> dis(storage_distance_computer(storage)); // 获取距离计算函数
-    nndescent.build(*dis, ntotal, verbose);
+    nndescent.build(*dis, ntotal, verbose); // 这里应该就是构建KNNG
 }
 
 void IndexNNDescent::reset() {

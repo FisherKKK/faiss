@@ -196,7 +196,7 @@ void IndexNSG::add(idx_t n, const float* x) {
         // prevent IndexNSG from deleting the storage
         index.own_fields = false;
 
-        index.add(n, x);
+        index.add(n, x); // 构建KNNG
 
         // storage->add is already implicit called in IndexNSG.add
         ntotal = storage->ntotal;

@@ -63,8 +63,8 @@ struct Neighbor {
 };
 
 struct Nhood {
-    std::mutex lock;
-    std::vector<Neighbor> pool; // candidate pool (a max heap)
+    std::mutex lock; /// 当前这个节点的lock, 管理这个节点对应的竞争问题
+    std::vector<Neighbor> pool; // candidate pool (a max heap), 候选池子, 保存了当前节点对其它节点的距离
     int M;                      // number of new neighbors to be operated
 
     std::vector<int> nn_old;  // old neighbors
@@ -82,6 +82,7 @@ struct Nhood {
 
     void insert(int id, float dist);
 
+    /// 这里相当于是一个回调函数, 向join中添加函数
     template <typename C>
     void join(C callback) const;
 };
@@ -111,13 +112,13 @@ struct NNDescent {
 
     void reset();
 
-    /// Initialize the KNN graph randomly
+    /// Initialize the KNN graph randomly, 随机初始化KNNG
     void init_graph(DistanceComputer& qdis);
 
-    /// Perform NNDescent algorithm
+    /// Perform NNDescent algorithm, 构建KNNG的具体算法
     void nndescent(DistanceComputer& qdis, bool verbose);
 
-    /// Perform local join on each node
+    /// Perform local join on each node, 每个节点进行局部的连接
     void join(DistanceComputer& qdis);
 
     /// Sample new neighbors for each node to peform local join later
@@ -150,7 +151,7 @@ struct NNDescent {
 
     int ntotal = 0;
 
-    KNNGraph graph;
+    KNNGraph graph; /// KNNGraph中实际上就是一个邻接表表示的图, 但是里面包含了新旧的neighbor
     std::vector<int> final_graph;
 };
 

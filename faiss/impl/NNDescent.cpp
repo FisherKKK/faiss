@@ -21,12 +21,13 @@ using LockGuard = std::lock_guard<std::mutex>;
 
 namespace nndescent {
 
+/// 随机生成size个数字 -> addr中, 所以这里就是随机初始化邻居的一种方式
 void gen_random(std::mt19937& rng, int* addr, const int size, const int N);
 
 Nhood::Nhood(int l, int s, std::mt19937& rng, int N) {
     M = s;
     nn_new.resize(s * 2);
-    gen_random(rng, nn_new.data(), (int)nn_new.size(), N);
+    gen_random(rng, nn_new.data(), (int)nn_new.size(), N); // 随机初始化邻居
 }
 
 /// Copy operator
@@ -52,7 +53,7 @@ Nhood::Nhood(const Nhood& other) {
     pool.reserve(other.pool.capacity());
 }
 
-/// Insert a point into the candidate pool
+/// Insert a point into the candidate pool, 将id这个节点加入到当前节点的候选池子中
 void Nhood::insert(int id, float dist) {
     LockGuard guard(lock);
     if (dist > pool.front().distance)
@@ -62,10 +63,10 @@ void Nhood::insert(int id, float dist) {
             return;
     }
     if (pool.size() < pool.capacity()) {
-        pool.push_back(Neighbor(id, dist, true));
-        std::push_heap(pool.begin(), pool.end());
+        pool.push_back(Neighbor(id, dist, true)); // 如果没有达到capacity
+        std::push_heap(pool.begin(), pool.end()); // push_heap操作
     } else {
-        std::pop_heap(pool.begin(), pool.end());
+        std::pop_heap(pool.begin(), pool.end()); // 否者先弹后压
         pool[pool.size() - 1] = Neighbor(id, dist, true);
         std::push_heap(pool.begin(), pool.end());
     }
@@ -76,12 +77,12 @@ void Nhood::insert(int id, float dist) {
 template <typename C>
 void Nhood::join(C callback) const {
     for (int const i : nn_new) {
-        for (int const j : nn_new) {
+        for (int const j : nn_new) { // 对哪些节点进行操作
             if (i < j) {
                 callback(i, j);
             }
         }
-        for (int j : nn_old) {
+        for (int j : nn_old) { // 对新旧节点进行操作
             callback(i, j);
         }
     }
@@ -92,7 +93,7 @@ void gen_random(std::mt19937& rng, int* addr, const int size, const int N) {
         addr[i] = rng() % (N - size);
     }
     std::sort(addr, addr + size);
-    for (int i = 1; i < size; ++i) {
+    for (int i = 1; i < size; ++i) { // 这里相当于去重
         if (addr[i] <= addr[i - 1]) {
             addr[i] = addr[i - 1] + 1;
         }
@@ -156,6 +157,7 @@ NNDescent::~NNDescent() {}
 void NNDescent::join(DistanceComputer& qdis) {
 #pragma omp parallel for default(shared) schedule(dynamic, 100)
     for (int n = 0; n < ntotal; n++) {
+        // 这里操作的思路是: 对当前节点的邻居进行判定, 将nn_new和nn_old互相加入到自己的候选池中
         graph[n].join([&](int i, int j) {
             if (i != j) {
                 float dist = qdis.symmetric_dis(i, j);
@@ -170,7 +172,7 @@ void NNDescent::join(DistanceComputer& qdis) {
 /// Store them in nn_new and nn_old
 void NNDescent::update() {
     // Step 1.
-    // Clear all nn_new and nn_old
+    // Clear all nn_new and nn_old, 首先清除所有的nn_new和nn_old
 #pragma omp parallel for
     for (int i = 0; i < ntotal; i++) {
         std::vector<int>().swap(graph[i].nn_new);
@@ -183,12 +185,12 @@ void NNDescent::update() {
     // That means We only select S new neighbors.
 #pragma omp parallel for
     for (int n = 0; n < ntotal; ++n) {
-        auto& nn = graph[n];
-        std::sort(nn.pool.begin(), nn.pool.end());
+        auto& nn = graph[n]; // 获取第n个node
+        std::sort(nn.pool.begin(), nn.pool.end()); // 对它的池子进行距离排序
 
         if (nn.pool.size() > L)
             nn.pool.resize(L);
-        nn.pool.reserve(L); // keep the pool size be L
+        nn.pool.reserve(L); // keep the pool size be L // 保持候选池子的大小
 
         int maxl = std::min(nn.M + S, (int)nn.pool.size());
         int c = 0;
@@ -211,19 +213,19 @@ void NNDescent::update() {
         std::mt19937 rng(random_seed * 5081 + omp_get_thread_num());
 #pragma omp for
         for (int n = 0; n < ntotal; ++n) {
-            auto& node = graph[n];
-            auto& nn_new = node.nn_new;
-            auto& nn_old = node.nn_old;
+            auto& node = graph[n]; // 获取第n个node
+            auto& nn_new = node.nn_new; // 获取nn_new
+            auto& nn_old = node.nn_old; // 获取nn_old
 
             for (int l = 0; l < node.M; ++l) {
-                auto& nn = node.pool[l];
-                auto& other = graph[nn.id]; // the other side of the edge
+                auto& nn = node.pool[l]; // 候选池的第l个neighbor
+                auto& other = graph[nn.id]; // the other side of the edge, 获取这个neighbor的node
 
                 if (nn.flag) { // the node is inserted newly
                     // push the neighbor into nn_new
-                    nn_new.push_back(nn.id);
+                    nn_new.push_back(nn.id); // 满足一定条件后加入到nn_new中
                     // push itself into other.rnn_new if it is not in
-                    // the candidate pool of the other side
+                    // the candidate pool of the other side, 如果nn不在它的反向中
                     if (nn.distance > other.pool.back().distance) {
                         LockGuard guard(other.lock);
                         if (other.rnn_new.size() < R) {
@@ -235,7 +237,7 @@ void NNDescent::update() {
                     }
                     nn.flag = false;
 
-                } else { // the node is old
+                } else { // the node is old, 这里相当于在ol当中
                     // push the neighbor into nn_old
                     nn_old.push_back(nn.id);
                     // push itself into other.rnn_old if it is not in
@@ -261,11 +263,12 @@ void NNDescent::update() {
     // R = 0 means no reverse links are used.
 #pragma omp parallel for
     for (int i = 0; i < ntotal; ++i) {
-        auto& nn_new = graph[i].nn_new;
+        auto& nn_new = graph[i].nn_new; // 正向连接
         auto& nn_old = graph[i].nn_old;
-        auto& rnn_new = graph[i].rnn_new;
+        auto& rnn_new = graph[i].rnn_new; // 反向连接
         auto& rnn_old = graph[i].rnn_old;
 
+        // 合并正向和反向连接
         nn_new.insert(nn_new.end(), rnn_new.begin(), rnn_new.end());
         nn_old.insert(nn_old.end(), rnn_old.begin(), rnn_old.end());
         if (nn_old.size() > R * 2) {
@@ -273,6 +276,7 @@ void NNDescent::update() {
             nn_old.reserve(R * 2);
         }
 
+        // 将反向连接全部清空
         std::vector<int>().swap(graph[i].rnn_new);
         std::vector<int>().swap(graph[i].rnn_old);
     }
@@ -280,14 +284,14 @@ void NNDescent::update() {
 
 void NNDescent::nndescent(DistanceComputer& qdis, bool verbose) {
     int num_eval_points = std::min(NUM_EVAL_POINTS, ntotal);
-    std::vector<int> eval_points(num_eval_points);
+    std::vector<int> eval_points(num_eval_points); // 评估点的数目
     std::vector<std::vector<int>> acc_eval_set(num_eval_points);
     std::mt19937 rng(random_seed * 6577 + omp_get_thread_num());
-    gen_random(rng, eval_points.data(), eval_points.size(), ntotal);
+    gen_random(rng, eval_points.data(), eval_points.size(), ntotal); // 随机生成评估点
     generate_eval_set(qdis, eval_points, acc_eval_set, ntotal);
-    for (int it = 0; it < iter; it++) {
-        join(qdis);
-        update();
+    for (int it = 0; it < iter; it++) { // 进行迭代
+        join(qdis); // 对所有节点的邻居更新候选节点
+        update(); // 更新邻居操作
 
         if (verbose) {
             float recall = eval_recall(eval_points, acc_eval_set);
@@ -296,7 +300,7 @@ void NNDescent::nndescent(DistanceComputer& qdis, bool verbose) {
     }
 }
 
-/// Sample a small number of points to evaluate the quality of KNNG built
+/// Sample a small number of points to evaluate the quality of KNNG built, 采样小数目的评估点衡量KNNG质量
 void NNDescent::generate_eval_set(
         DistanceComputer& qdis,
         std::vector<int>& c,
@@ -313,7 +317,7 @@ void NNDescent::generate_eval_set(
             tmp.push_back(Neighbor(j, dist, true));
         }
 
-        std::partial_sort(tmp.begin(), tmp.begin() + K, tmp.end());
+        std::partial_sort(tmp.begin(), tmp.begin() + K, tmp.end()); // 保证前K个是最小元素
         for (int j = 0; j < K; j++) {
             v[i].push_back(tmp[j].id);
         }
@@ -344,10 +348,10 @@ float NNDescent::eval_recall(
 
 /// Initialize the KNN graph randomly
 void NNDescent::init_graph(DistanceComputer& qdis) {
-    graph.reserve(ntotal);
+    graph.reserve(ntotal); // 预先为所有的点分配邻居
     {
         std::mt19937 rng(random_seed * 6007);
-        for (int i = 0; i < ntotal; i++) {
+        for (int i = 0; i < ntotal; i++) { // 为所有的节点随机连边
             graph.push_back(Nhood(L, S, rng, (int)ntotal));
         }
     }
@@ -355,22 +359,22 @@ void NNDescent::init_graph(DistanceComputer& qdis) {
     {
         std::mt19937 rng(random_seed * 7741 + omp_get_thread_num());
 #pragma omp for
-        for (int i = 0; i < ntotal; i++) {
+        for (int i = 0; i < ntotal; i++) { // 这里就相当于为每一个ntotal进行并行操作
             std::vector<int> tmp(S);
 
-            gen_random(rng, tmp.data(), S, ntotal);
+            gen_random(rng, tmp.data(), S, ntotal); // 这里相当于并行生成随机节点到tmp中
 
             for (int j = 0; j < S; j++) {
                 int id = tmp[j];
                 if (id == i) {
                     continue;
                 }
-                float dist = qdis.symmetric_dis(i, id);
+                float dist = qdis.symmetric_dis(i, id); // 计算距离i和id的距离
 
                 graph[i].pool.push_back(Neighbor(id, dist, true));
             }
-            std::make_heap(graph[i].pool.begin(), graph[i].pool.end());
-            graph[i].pool.reserve(L);
+            std::make_heap(graph[i].pool.begin(), graph[i].pool.end()); // 处理成堆
+            graph[i].pool.reserve(L); // 这里相当于预先分配空间
         }
     }
 }
@@ -392,13 +396,14 @@ void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
     }
 
     ntotal = n;
-    init_graph(qdis);
-    nndescent(qdis, verbose);
+    init_graph(qdis); // 随机初始化图
+    nndescent(qdis, verbose); // nndescent算法计算knng
 
-    final_graph.resize(ntotal * K);
+    final_graph.resize(ntotal * K); // 每个人存k个邻居
 
     // Store the neighbor link structure into final_graph
     // Clear the old graph
+    // 将最后的结果copy到final_graph中, 这里实际上就是KNNG
     for (int i = 0; i < ntotal; i++) {
         std::sort(graph[i].pool.begin(), graph[i].pool.end());
         for (int j = 0; j < K; j++) {
@@ -406,7 +411,7 @@ void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
             final_graph[i * K + j] = graph[i].pool[j].id;
         }
     }
-    std::vector<Nhood>().swap(graph);
+    std::vector<Nhood>().swap(graph); // 清空graph
     has_built = true;
 
     if (verbose) {
