@@ -24,3 +24,6 @@ target_link_libraries(6-IndexHNSW PRIVATE faiss)
 
 add_executable(7-IndexNSG EXCLUDE_FROM_ALL 7-IndexNSG.cpp)
 target_link_libraries(7-IndexNSG PRIVATE faiss)
+
+add_executable(8-IndexAgg EXCLUDE_FROM_ALL 8-IndexAgg.cpp)
+target_link_libraries(8-IndexAgg PRIVATE faiss)
