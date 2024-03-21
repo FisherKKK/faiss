@@ -28,6 +28,7 @@
 #include <faiss/impl/CodePacker.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
+#include <faiss/utils/random.h>
 
 namespace faiss {
 
@@ -76,6 +77,7 @@ void Level1Quantizer::train_q1(
             printf("Training level-1 quantizer on %zd vectors in %zdD\n", n, d);
 
         Clustering clus(d, nlist, cp);
+//        clus.niter = 0;
         quantizer->reset();
         if (clustering_index) {
             clus.train(n, x, *clustering_index);
@@ -115,6 +117,16 @@ void Level1Quantizer::train_q1(
             quantizer->train(nlist, clus.centroids.data());
         }
         quantizer->add(nlist, clus.centroids.data());
+    } else if (quantizer_trains_alone == 3) {
+        // 这里我们需要采样一部分样本进行训练
+        std::vector<int> perm(n);
+        rand_perm(perm.data(), n, 12345); // 这里也相当于是一个映射表
+        float *sample_data = new float[nlist * d];
+        for (size_t i = 0; i != nlist; i++) {
+            memcpy(sample_data + i * d, x + perm[i] * d, sizeof(float) * d);
+        }
+        quantizer->add(nlist, sample_data); // 训练出一个hnsw
+        delete[] sample_data;
     }
 }
 

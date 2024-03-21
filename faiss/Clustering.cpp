@@ -412,7 +412,7 @@ void Clustering::train_encoded(
         centroids.resize(d * k);
         std::vector<int> perm(nx);
 
-        rand_perm(perm.data(), nx, seed + 1 + redo * 15486557L);
+        rand_perm(perm.data(), nx, 12345);
 
         if (!codec) {
             // 如果不需要解码器那么就直接将数据copy过去

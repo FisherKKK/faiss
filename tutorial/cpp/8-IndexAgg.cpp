@@ -42,58 +42,89 @@ int main() {
 
     double sample_rate = 0.1;
     int seed = 12345;
-    int k = 1;
+    int k = 50;
 
     idx_t *I_G = new idx_t[nq * k];
     float *D_G = new float[nq * k];
 
     {
-//        faiss::IndexFlatL2 index(d);
-//        index.add(nb, xb);
-//        index.search(nq, xq, k, D_G, I_G);
+        printf("**************Flat Index****************\n");
+        faiss::IndexFlatL2 index(d);
+        index.add(nb, xb);
+        index.search(nq, xq, k, D_G, I_G);
     }
+
 
     /******************************IVF**************************/
     {
-//        idx_t* I = new idx_t[k * nq];
-//        float* D = new float[k * nq];
-//        faiss::IndexFlatL2 quantizer(d);
-//        faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
-//        double t1 = faiss::getmillisecs();
-//        index.train(nb, xb);
-//        index.add(nb, xb); // 这里是添加每一个点
-//        double t2 = faiss::getmillisecs();
-//        printf("Time cost for k-means: %lf\n", t2 - t1);
-
-//        for (size_t i = 1; i < 200; i += 10) {
-//            index.nprobe = i; // 设置探测数
-//            t1 = faiss::getmillisecs();
-//            index.search(nq, xq, k, D, I);
-//            t2 = faiss::getmillisecs();
-//            float recall = calculate_recall_k(I, I_G, k);
-//            printf("Recall@%d: (Time, Recall)/(%lf, %f)\n", k, t2 - t1, recall);
-//        }
-//
-//        delete[] I;
-//        delete[] D;
-    }
-
-    {
-
-
-
-
-
-        int M = 8; // Index的连边数目
-        int r = 1;
-        faiss::IndexHNSWFlat quantizer(d, M);
+        printf("**************IVF Index****************\n");
+        idx_t* I = new idx_t[k * nq];
+        float* D = new float[k * nq];
+        faiss::IndexFlatL2 quantizer(d);
         faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
-
         double t1 = faiss::getmillisecs();
         index.train(nb, xb);
         index.add(nb, xb); // 这里是添加每一个点
         double t2 = faiss::getmillisecs();
         printf("Time cost for k-means: %lf\n", t2 - t1);
+
+        for (size_t i = 1; i < 200; i += 10) {
+            index.nprobe = i; // 设置探测数
+            t1 = faiss::getmillisecs();
+            index.search(nq, xq, k, D, I);
+            t2 = faiss::getmillisecs();
+            float avg_recall = 0.f;
+            for (size_t j = 0; j != nq; j++) {
+                idx_t *qi = I + k * j;
+                idx_t *gi = I_G + k * j;
+                avg_recall += calculate_recall_k(qi, gi, k);
+            }
+
+           avg_recall /= nq;
+
+            printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
+        }
+
+        delete[] I;
+        delete[] D;
+    }
+
+    {
+        printf("**************HNSW-IVF Index****************\n");
+        idx_t* I = new idx_t[k * nq];
+        float* D = new float[k * nq];
+        int M = 16; // Index的连边数目
+        faiss::IndexHNSWFlat quantizer(d, M);
+        faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
+
+        double t1 = faiss::getmillisecs();
+        index.quantizer_trains_alone = 3;
+        index.train(nb, xb);
+        index.add(nb, xb); // 这里是添加每一个点
+        double t2 = faiss::getmillisecs();
+        printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
+
+        for (size_t i = 1; i < 200; i += 10) {
+            index.nprobe = i; // 设置探测数
+            t1 = faiss::getmillisecs();
+            index.search(nq, xq, k, D, I);
+            t2 = faiss::getmillisecs();
+
+            float avg_recall = 0.f;
+            for (size_t j = 0; j != nq; j++) {
+                idx_t *qi = I + k * j;
+                idx_t *gi = I_G + k * j;
+                avg_recall += calculate_recall_k(qi, gi, k);
+            }
+            avg_recall /= nq;
+
+            printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
+        }
+
+        delete[] I;
+        delete[] D;
+
+
 
 
 
@@ -136,7 +167,7 @@ int main() {
 //            ivf[topk[i]].push_back(i);
 //        }
 //        double t2 = faiss::getmillisecs();
-        printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
+//        printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
 
 
 
