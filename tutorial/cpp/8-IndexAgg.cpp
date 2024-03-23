@@ -56,49 +56,49 @@ int main() {
 
 
     /******************************IVF**************************/
-    {
-        printf("**************IVF Index****************\n");
-        idx_t* I = new idx_t[k * nq];
-        float* D = new float[k * nq];
-        faiss::IndexFlatL2 quantizer(d);
-        faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
-        double t1 = faiss::getmillisecs();
-        index.train(nb, xb);
-        index.add(nb, xb); // 这里是添加每一个点
-        double t2 = faiss::getmillisecs();
-        printf("Time cost for k-means: %lf\n", t2 - t1);
-
-        for (size_t i = 1; i < 200; i += 10) {
-            index.nprobe = i; // 设置探测数
-            t1 = faiss::getmillisecs();
-            index.search(nq, xq, k, D, I);
-            t2 = faiss::getmillisecs();
-            float avg_recall = 0.f;
-            for (size_t j = 0; j != nq; j++) {
-                idx_t *qi = I + k * j;
-                idx_t *gi = I_G + k * j;
-                avg_recall += calculate_recall_k(qi, gi, k);
-            }
-
-           avg_recall /= nq;
-
-            printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
-        }
-
-        delete[] I;
-        delete[] D;
-    }
+//    {
+//        printf("**************IVF Index****************\n");
+//        idx_t* I = new idx_t[k * nq];
+//        float* D = new float[k * nq];
+//        faiss::IndexFlatL2 quantizer(d);
+//        faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
+//        double t1 = faiss::getmillisecs();
+//        index.train(nb, xb);
+//        index.add(nb, xb); // 这里是添加每一个点
+//        double t2 = faiss::getmillisecs();
+//        printf("Time cost for k-means: %lf\n", t2 - t1);
+//
+//        for (size_t i = 1; i < 200; i += 10) {
+//            index.nprobe = i; // 设置探测数
+//            t1 = faiss::getmillisecs();
+//            index.search(nq, xq, k, D, I);
+//            t2 = faiss::getmillisecs();
+//            float avg_recall = 0.f;
+//            for (size_t j = 0; j != nq; j++) {
+//                idx_t *qi = I + k * j;
+//                idx_t *gi = I_G + k * j;
+//                avg_recall += calculate_recall_k(qi, gi, k);
+//            }
+//
+//           avg_recall /= nq;
+//
+//            printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
+//        }
+//
+//        delete[] I;
+//        delete[] D;
+//    }
 
     {
         printf("**************HNSW-IVF Index****************\n");
         idx_t* I = new idx_t[k * nq];
         float* D = new float[k * nq];
-        int M = 16; // Index的连边数目
+        int M = 32; // Index的连边数目
         faiss::IndexHNSWFlat quantizer(d, M);
         faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
 
         double t1 = faiss::getmillisecs();
-        index.quantizer_trains_alone = 3;
+//        index.quantizer_trains_alone = 2;
         index.train(nb, xb);
         index.add(nb, xb); // 这里是添加每一个点
         double t2 = faiss::getmillisecs();
