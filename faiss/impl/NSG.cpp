@@ -236,19 +236,19 @@ void NSG::init_graph(Index* storage, const nsg::Graph<idx_t>& knn_graph) {
     int d = storage->d;
     int n = storage->ntotal;
 
-    std::unique_ptr<float[]> center(new float[d]);
+    std::unique_ptr<float[]> center(new float[d]); // 中心点
     std::unique_ptr<float[]> tmp(new float[d]);
     std::fill_n(center.get(), d, 0.0f);
 
     for (int i = 0; i < n; i++) {
-        storage->reconstruct(i, tmp.get());
+        storage->reconstruct(i, tmp.get()); // 将第i个vector copy到tmp中
         for (int j = 0; j < d; j++) {
-            center[j] += tmp[j];
+            center[j] += tmp[j]; // 计算总和
         }
     }
 
     for (int i = 0; i < d; i++) {
-        center[i] /= n;
+        center[i] /= n; // 取均值
     }
 
     std::vector<Neighbor> retset;
@@ -261,13 +261,13 @@ void NSG::init_graph(Index* storage, const nsg::Graph<idx_t>& knn_graph) {
     dis->set_query(center.get());
     VisitedTable vt(ntotal);
 
-    // Do not collect the visited nodes
+    // Do not collect the visited nodes, 这里相当于搜索和center最近的点, 基于KNNG搜索
     search_on_graph<false>(knn_graph, *dis, vt, ep, L, retset, tmpset);
 
     // set enterpoint
-    enterpoint = retset[0].id;
+    enterpoint = retset[0].id; // 将搜索得到的点作为入口点
 }
-
+//TODO 这里的代码还需要细看
 template <bool collect_fullset, class index_t>
 void NSG::search_on_graph(
         const nsg::Graph<index_t>& graph,
@@ -283,7 +283,7 @@ void NSG::search_on_graph(
 
     int num_ids = 0;
     for (int i = 0; i < init_ids.size() && i < graph.K; i++) {
-        int id = (int)graph.at(ep, i);
+        int id = (int)graph.at(ep, i); // 获取ep的第i个邻居
         if (id < 0 || id >= ntotal) {
             continue;
         }
@@ -370,14 +370,14 @@ void NSG::link(
 
 #pragma omp for schedule(dynamic, 100)
         for (int i = 0; i < ntotal; i++) {
-            storage->reconstruct(i, vec.get());
-            dis->set_query(vec.get());
+            storage->reconstruct(i, vec.get()); // 获取第i个向量
+            dis->set_query(vec.get()); // 将它设置为query
 
-            // Collect the visited nodes into pool
+            // Collect the visited nodes into pool, // 基于KNNG搜索当前点的紧邻
             search_on_graph<true>(
                     knn_graph, *dis, vt, enterpoint, L, tmp, pool);
 
-            sync_prune(i, pool, *dis, vt, knn_graph, graph);
+            sync_prune(i, pool, *dis, vt, knn_graph, graph); // 这里相当于是剪枝
 
             pool.clear();
             tmp.clear();
@@ -405,14 +405,14 @@ void NSG::sync_prune(
         VisitedTable& vt,
         const nsg::Graph<idx_t>& knn_graph,
         nsg::Graph<Node>& graph) {
-    for (int i = 0; i < knn_graph.K; i++) {
-        int id = knn_graph.at(q, i);
+    for (int i = 0; i < knn_graph.K; i++) { // 所以这段代码是提取q的所有邻居, 然后放到vector中
+        int id = knn_graph.at(q, i); // q的第i个最近邻
         if (id < 0 || id >= ntotal || vt.get(id)) {
             continue;
         }
 
-        float dist = dis.symmetric_dis(q, id);
-        pool.emplace_back(id, dist);
+        float dist = dis.symmetric_dis(q, id); // q <-> id距离
+        pool.emplace_back(id, dist); // 放到vector中
     }
 
     std::sort(pool.begin(), pool.end());

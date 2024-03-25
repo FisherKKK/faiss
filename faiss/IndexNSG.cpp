@@ -218,14 +218,14 @@ void IndexNSG::add(idx_t n, const float* x) {
         printf("  Check the knn graph\n");
     }
 
-    // check the knn graph
+    // check the knn graph, 检查KNNG
     check_knn_graph(knng.data(), n, GK);
 
     if (verbose) {
         printf("  nsg building\n");
     }
 
-    const nsg::Graph<idx_t> knn_graph(knng.data(), n, GK);
+    const nsg::Graph<idx_t> knn_graph(knng.data(), n, GK); // KNNGraph
     nsg.build(storage, n, knn_graph, verbose);
     is_built = true;
 }

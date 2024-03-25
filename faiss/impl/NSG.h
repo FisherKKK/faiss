@@ -138,7 +138,7 @@ struct NSG {
             float* D,
             VisitedTable& vt) const;
 
-    // Compute the center point
+    // Compute the center point, 计算中心点
     void init_graph(Index* storage, const nsg::Graph<idx_t>& knn_graph);
 
     // Search on a built graph.
