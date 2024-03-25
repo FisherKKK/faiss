@@ -97,7 +97,7 @@ struct Node {
 };
 
 inline int insert_into_pool(Neighbor* addr, int K, Neighbor nn) {
-    // find the location to insert
+    // find the location to insert, 找到一个最近的位置
     int left = 0, right = K - 1;
     if (addr[left].distance > nn.distance) {
         memmove(&addr[left + 1], &addr[left], K * sizeof(Neighbor));
@@ -108,6 +108,7 @@ inline int insert_into_pool(Neighbor* addr, int K, Neighbor nn) {
         addr[K] = nn;
         return K;
     }
+    // 二分法找点
     while (left < right - 1) {
         int mid = (left + right) / 2;
         if (addr[mid].distance > nn.distance) {
@@ -174,7 +175,7 @@ void NSG::build(
     }
 
     ntotal = n;
-    init_graph(storage, knn_graph);
+    init_graph(storage, knn_graph); // 这里就是计算中心点
 
     std::vector<int> degrees(n, 0);
     {
@@ -184,7 +185,7 @@ void NSG::build(
 
         final_graph = std::make_shared<nsg::Graph<int>>(n, R);
         std::fill_n(final_graph->data, n * R, EMPTY_ID);
-
+        // 将tmp_graph中的内容copy -> final_graph
 #pragma omp parallel for
         for (int i = 0; i < n; i++) {
             int cnt = 0;
@@ -199,7 +200,7 @@ void NSG::build(
         }
     }
 
-    int num_attached = tree_grow(storage, degrees);
+    int num_attached = tree_grow(storage, degrees); // 相当于采用tree search使图变得全联通
     check_graph();
     is_built = true;
 
@@ -278,9 +279,9 @@ void NSG::search_on_graph(
         std::vector<Neighbor>& retset,
         std::vector<Node>& fullset) const {
     RandomGenerator gen(0x1234);
-    retset.resize(pool_size + 1);
-    std::vector<int> init_ids(pool_size);
-
+    retset.resize(pool_size + 1); // 返回的结果集
+    std::vector<int> init_ids(pool_size); // 初始节点
+    // 首先初始化init_ids, 这里相当于ep的邻居
     int num_ids = 0;
     for (int i = 0; i < init_ids.size() && i < graph.K; i++) {
         int id = (int)graph.at(ep, i); // 获取ep的第i个邻居
@@ -292,7 +293,7 @@ void NSG::search_on_graph(
         vt.set(id);
         num_ids += 1;
     }
-
+    // 这里是是如果节点输入不够就补充节点
     while (num_ids < pool_size) {
         int id = gen.rand_int(ntotal);
         if (vt.get(id)) {
@@ -304,27 +305,27 @@ void NSG::search_on_graph(
         vt.set(id);
     }
 
-    for (int i = 0; i < init_ids.size(); i++) {
+    for (int i = 0; i < init_ids.size(); i++) { // 对初始点集中每一个点遍历
         int id = init_ids[i];
 
         float dist = dis(id);
-        retset[i] = Neighbor(id, dist, true);
+        retset[i] = Neighbor(id, dist, true); // 将当前遍历的点加入到结果集中
 
         if (collect_fullset) {
-            fullset.emplace_back(retset[i].id, retset[i].distance);
+            fullset.emplace_back(retset[i].id, retset[i].distance); // 收集结果集中的遍历的点
         }
     }
 
-    std::sort(retset.begin(), retset.begin() + pool_size);
+    std::sort(retset.begin(), retset.begin() + pool_size); // 对结果集中的点进行排序, 目前这里的点是都是入口点的邻居
 
     int k = 0;
     while (k < pool_size) {
         int updated_pos = pool_size;
 
-        if (retset[k].flag) {
+        if (retset[k].flag) { // flag用来检测当前点是否被扩展过, true表示没有被扩展过
             retset[k].flag = false;
-            int n = retset[k].id;
-
+            int n = retset[k].id; // 获取当前这个点的id
+            // 对这个点进行扩展, 对其邻居进行遍历, 然后进行扩展
             for (int m = 0; m < graph.K; m++) {
                 int id = (int)graph.at(n, m);
                 if (id < 0 || id > ntotal || vt.get(id)) {
@@ -335,14 +336,14 @@ void NSG::search_on_graph(
                 float dist = dis(id);
                 Neighbor nn(id, dist, true);
                 if (collect_fullset) {
-                    fullset.emplace_back(id, dist);
+                    fullset.emplace_back(id, dist); // 将被扩展的点也加入到收藏集中
                 }
 
-                if (dist >= retset[pool_size - 1].distance) {
+                if (dist >= retset[pool_size - 1].distance) { // 如果当前点的距离比最远点还要远, 就不管了
                     continue;
                 }
 
-                int r = insert_into_pool(retset.data(), pool_size, nn);
+                int r = insert_into_pool(retset.data(), pool_size, nn); // 否者就将这个点加入到节点集中
 
                 updated_pos = std::min(updated_pos, r);
             }
@@ -373,11 +374,11 @@ void NSG::link(
             storage->reconstruct(i, vec.get()); // 获取第i个向量
             dis->set_query(vec.get()); // 将它设置为query
 
-            // Collect the visited nodes into pool, // 基于KNNG搜索当前点的紧邻
+            // Collect the visited nodes into pool, // 基于KNNG搜索当前点的近邻
             search_on_graph<true>(
                     knn_graph, *dis, vt, enterpoint, L, tmp, pool);
 
-            sync_prune(i, pool, *dis, vt, knn_graph, graph); // 这里相当于是剪枝
+            sync_prune(i, pool, *dis, vt, knn_graph, graph); // 这里相当于是剪枝, 对pool中所有节点进行剪枝
 
             pool.clear();
             tmp.clear();
@@ -393,7 +394,7 @@ void NSG::link(
 
 #pragma omp for schedule(dynamic, 100)
         for (int i = 0; i < ntotal; ++i) {
-            add_reverse_links(i, locks, *dis, graph);
+            add_reverse_links(i, locks, *dis, graph); // 在这个图中添加反向边
         }
     } // omp parallel
 }
@@ -405,7 +406,7 @@ void NSG::sync_prune(
         VisitedTable& vt,
         const nsg::Graph<idx_t>& knn_graph,
         nsg::Graph<Node>& graph) {
-    for (int i = 0; i < knn_graph.K; i++) { // 所以这段代码是提取q的所有邻居, 然后放到vector中
+    for (int i = 0; i < knn_graph.K; i++) { // 所以这段代码是提取q的所有邻居, 然后放到pool中
         int id = knn_graph.at(q, i); // q的第i个最近邻
         if (id < 0 || id >= ntotal || vt.get(id)) {
             continue;
@@ -415,35 +416,35 @@ void NSG::sync_prune(
         pool.emplace_back(id, dist); // 放到vector中
     }
 
-    std::sort(pool.begin(), pool.end());
+    std::sort(pool.begin(), pool.end()); // 所以目前的池子里面就是q的KNNG中的邻居, 按照距离从小到大排序
 
-    std::vector<Node> result;
+    std::vector<Node> result; // 这里应该就是最后的结果集
 
-    int start = 0;
+    int start = 0; // 这个start就是盯着pool进行遍历
     if (pool[start].id == q) {
-        start++;
+        start++; // 计算起始点
     }
-    result.push_back(pool[start]);
+    result.push_back(pool[start]); // 将起始点加入到结果集中
 
     while (result.size() < R && (++start) < pool.size() && start < C) {
-        auto& p = pool[start];
+        auto& p = pool[start]; // 这是当前正在检测的点
         bool occlude = false;
-        for (int t = 0; t < result.size(); t++) {
-            if (p.id == result[t].id) {
+        for (int t = 0; t < result.size(); t++) { // 对result中的结果进行遍历, 判断pool中的节点是否已经加入到了结果集和剪裁
+            if (p.id == result[t].id) { // 如果这个节点已经加入到了结果集
                 occlude = true;
                 break;
-            }
-            float djk = dis.symmetric_dis(result[t].id, p.id);
-            if (djk < p.distance /* dik */) {
+            } // 对于那些不在结果集中的点
+            float djk = dis.symmetric_dis(result[t].id, p.id); // 计算结果集中的点和当前pool中点的距离
+            if (djk < p.distance /* dik */) { // 这里就相当于是HNSW中的剪裁策略, 防止局部过于稠密
                 occlude = true;
                 break;
             }
         }
         if (!occlude) {
-            result.push_back(p);
+            result.push_back(p); // 如果没有被剪裁掉, 加入到解雇集中
         }
     }
-
+    // 将剪裁后的结果加入到graph中
     for (size_t i = 0; i < R; i++) {
         if (i < result.size()) {
             graph.at(q, i).id = result[i].id;
@@ -464,13 +465,13 @@ void NSG::add_reverse_links(
             break;
         }
 
-        Node sn(q, graph.at(q, i).distance);
+        Node sn(q, graph.at(q, i).distance); // 将q作为i的邻居
         int des = graph.at(q, i).id;
 
         std::vector<Node> tmp_pool;
         int dup = 0;
         {
-            LockGuard guard(locks[des]);
+            LockGuard guard(locks[des]); // 锁住des节点
             for (int j = 0; j < R; j++) {
                 if (graph.at(des, j).id == EMPTY_ID) {
                     break;
@@ -479,7 +480,7 @@ void NSG::add_reverse_links(
                     dup = 1;
                     break;
                 }
-                tmp_pool.push_back(graph.at(des, j));
+                tmp_pool.push_back(graph.at(des, j)); // 计算所有的池子中的点, 加入到这个集合中
             }
         }
 
@@ -488,7 +489,7 @@ void NSG::add_reverse_links(
         }
 
         tmp_pool.push_back(sn);
-        if (tmp_pool.size() > R) {
+        if (tmp_pool.size() > R) { // 如果最终的度数大于R就进行剪裁
             std::vector<Node> result;
             int start = 0;
             std::sort(tmp_pool.begin(), tmp_pool.end());
@@ -513,16 +514,16 @@ void NSG::add_reverse_links(
                 if (!occlude) {
                     result.push_back(p);
                 }
-            }
+            } // 到这里就剪裁完成了
 
             {
                 LockGuard guard(locks[des]);
-                for (int t = 0; t < result.size(); t++) {
+                for (int t = 0; t < result.size(); t++) { // 锁住当前的节点, 然后将结果copy到图中
                     graph.at(des, t) = result[t];
                 }
             }
 
-        } else {
+        } else { // 不需要剪裁
             LockGuard guard(locks[des]);
             for (int t = 0; t < R; t++) {
                 if (graph.at(des, t).id == EMPTY_ID) {

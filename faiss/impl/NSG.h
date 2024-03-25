@@ -112,7 +112,7 @@ struct NSG {
 
     int enterpoint; ///< enterpoint
 
-    std::shared_ptr<nsg::Graph<int>> final_graph; ///< NSG graph structure
+    std::shared_ptr<nsg::Graph<int>> final_graph; ///< NSG graph structure, 真正NSG graph的结构
 
     bool is_built = false; ///< NSG is built or not
 
@@ -143,7 +143,7 @@ struct NSG {
 
     // Search on a built graph.
     // If collect_fullset is true, the visited nodes will be
-    // collected in `fullset`.
+    // collected in `fullset`. 所有被扩展/visited的点都会被加入到fullset
     template <bool collect_fullset, class index_t>
     void search_on_graph(
             const nsg::Graph<index_t>& graph,
