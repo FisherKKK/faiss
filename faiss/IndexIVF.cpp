@@ -77,7 +77,7 @@ void Level1Quantizer::train_q1(
             printf("Training level-1 quantizer on %zd vectors in %zdD\n", n, d);
 
         Clustering clus(d, nlist, cp);
-        clus.niter = 0;
+//        clus.niter = 0;
         quantizer->reset();
         if (clustering_index) {
             clus.train(n, x, *clustering_index);

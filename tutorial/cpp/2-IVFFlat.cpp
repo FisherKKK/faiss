@@ -38,8 +38,8 @@ int main() {
         xq[d * i] += i / 1000.;
     }
 
-    int nlist = 100;
-    int k = 4;
+    int nlist = 10000;
+    int k = 500;
 
     faiss::IndexFlatL2 quantizer(d); // the other index
     faiss::IndexIVFFlat index(&quantizer, d, nlist);
@@ -61,7 +61,7 @@ int main() {
             printf("\n");
         }
 
-        index.nprobe = 10;
+        index.nprobe = 10000;
         index.search(nq, xq, k, D, I);
 
         printf("I=\n");

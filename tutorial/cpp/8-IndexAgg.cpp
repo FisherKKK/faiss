@@ -5,6 +5,7 @@
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/utils/utils.h>
+#include <fstream>
 
 using idx_t = faiss::idx_t;
 
@@ -18,9 +19,9 @@ float calculate_recall_k(idx_t *x, idx_t *y, int k) {
 }
 
 int main() {
-    int d = 64;      // dimension
-    int nb = 100000; // database size
-    int nq = 10000;  // nb of queries
+    int d = 256;      // dimension
+    int nb = 1000000; // database size
+    int nq = 1000;  // nb of queries
 
     std::mt19937 rng;
     std::uniform_real_distribution<> distrib;
@@ -42,7 +43,7 @@ int main() {
 
     double sample_rate = 0.1;
     int seed = 12345;
-    int k = 50;
+    int k = 5000;
 
     idx_t *I_G = new idx_t[nq * k];
     float *D_G = new float[nq * k];
@@ -53,6 +54,7 @@ int main() {
         index.add(nb, xb);
         index.search(nq, xq, k, D_G, I_G);
     }
+
 
 
     /******************************IVF**************************/
@@ -89,26 +91,78 @@ int main() {
 //        delete[] D;
 //    }
 
+
+    /******************************HNSW**************************/
+    /*
+        std::fstream fout("/tmp/hnsw.txt", std::ios_base::out);
+
+        {
+            printf("**************HNSW Index****************\n");
+            idx_t* I = new idx_t[k * nq];
+            float* D = new float[k * nq];
+            faiss::IndexHNSWFlat index(d, 16);
+            double t1 = faiss::getmillisecs();
+//            index.hnsw.efConstruction = 50;
+            index.train(nb, xb);
+            index.add(nb, xb); // 这里是添加每一个点
+            double t2 = faiss::getmillisecs();
+            printf("Time cost for build HNSW: %lf\n", t2 - t1);
+            fout << t2 - t1 << "\n";
+
+            for (size_t i = 10; i < 5000; i += 100) {
+                index.hnsw.efSearch = i; // 设置探测数
+                t1 = faiss::getmillisecs();
+                index.search(nq, xq, k, D, I);
+                t2 = faiss::getmillisecs();
+                float avg_recall = 0.f;
+                for (size_t j = 0; j != nq; j++) {
+                    idx_t *qi = I + k * j;
+                    idx_t *gi = I_G + k * j;
+                    avg_recall += calculate_recall_k(qi, gi, k);
+                }
+
+               avg_recall /= nq;
+
+               printf("Recall@%d-efSearch@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
+               fout << "(" << t2 - t1 << ", " << avg_recall << ")" << ", ";
+            }
+
+            delete[] I;
+            delete[] D;
+        }
+
+        */
+
+
+
     {
+        std::fstream fout("/tmp/hnswivf25.txt", std::ios_base::out);
         printf("**************HNSW-IVF Index****************\n");
         idx_t* I = new idx_t[k * nq];
         float* D = new float[k * nq];
-        int M = 32; // Index的连边数目
+        int M = 16; // Index的连边数目
         faiss::IndexHNSWFlat quantizer(d, M);
+//        faiss::IndexFlatL2 scan(d);
         faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
+//        index.clustering_index = &scan;
 
         double t1 = faiss::getmillisecs();
-//        index.quantizer_trains_alone = 2;
+        index.quantizer_trains_alone = 0;
+
         index.train(nb, xb);
         index.add(nb, xb); // 这里是添加每一个点
         double t2 = faiss::getmillisecs();
+        fout << t2 - t1 << "\n";
         printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
+        quantizer.hnsw.efSearch = 512;
 
-        for (size_t i = 1; i < 200; i += 10) {
+//        index.clustering_index = nullptr;
+        for (size_t i = 10; i <= 800; i += 20) {
             index.nprobe = i; // 设置探测数
             t1 = faiss::getmillisecs();
             index.search(nq, xq, k, D, I);
             t2 = faiss::getmillisecs();
+
 
             float avg_recall = 0.f;
             for (size_t j = 0; j != nq; j++) {
@@ -117,7 +171,7 @@ int main() {
                 avg_recall += calculate_recall_k(qi, gi, k);
             }
             avg_recall /= nq;
-
+            fout << "(" << t2 - t1 << ", " << avg_recall << ")" << ", ";
             printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
         }
 
