@@ -6,6 +6,9 @@
 #include <faiss/IndexFlat.h>
 #include <faiss/utils/utils.h>
 #include <fstream>
+#include <iostream>
+
+void fvecs_read(const char *path, float vecs[], int n, int d);
 
 using idx_t = faiss::idx_t;
 
@@ -19,27 +22,35 @@ float calculate_recall_k(idx_t *x, idx_t *y, int k) {
 }
 
 int main() {
-    int d = 256;      // dimension
+    int d = 128;      // dimension
     int nb = 1000000; // database size
-    int nq = 1000;  // nb of queries
+    int nq = 10000;  // nb of queries
 
-    std::mt19937 rng;
-    std::uniform_real_distribution<> distrib;
+
 
     float* xb = new float[d * nb];
     float* xq = new float[d * nq];
 
+    /*
+    fvecs_read("/data/sift/sift_base.fvecs", xb, nb, d);
+    fvecs_read("/data/sift/sift_query.fvecs", xq, nq, d);
+     */
+
+    // random data
+    std::mt19937 rng;
+    std::uniform_real_distribution<> distrib;
     for (int i = 0; i < nb; i++) {
         for (int j = 0; j < d; j++)
             xb[d * i + j] = distrib(rng);
-        xb[d * i] += i / 1000.;
+//        xb[d * i] += i / 1000.;
     }
 
     for (int i = 0; i < nq; i++) {
         for (int j = 0; j < d; j++)
             xq[d * i + j] = distrib(rng);
-        xq[d * i] += i / 1000.;
+//        xq[d * i] += i / 1000.;
     }
+     //
 
     double sample_rate = 0.1;
     int seed = 12345;
@@ -92,15 +103,16 @@ int main() {
 //    }
 
 
+
     /******************************HNSW**************************/
     /*
-        std::fstream fout("/tmp/hnsw.txt", std::ios_base::out);
+        std::fstream fout("/tmp/hnsw_m32_uniform.txt", std::ios_base::out);
 
         {
             printf("**************HNSW Index****************\n");
             idx_t* I = new idx_t[k * nq];
             float* D = new float[k * nq];
-            faiss::IndexHNSWFlat index(d, 16);
+            faiss::IndexHNSWFlat index(d, 32);
             double t1 = faiss::getmillisecs();
 //            index.hnsw.efConstruction = 50;
             index.train(nb, xb);
@@ -125,39 +137,40 @@ int main() {
 
                printf("Recall@%d-efSearch@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
                fout << "(" << t2 - t1 << ", " << avg_recall << ")" << ", ";
+               fout << std::flush;
             }
 
             delete[] I;
             delete[] D;
         }
-
         */
 
 
-
     {
-        std::fstream fout("/tmp/hnswivf25.txt", std::ios_base::out);
+        std::fstream fout("/tmp/hnsw_m32_ivf0_ef1024_uniform.txt", std::ios_base::out);
         printf("**************HNSW-IVF Index****************\n");
         idx_t* I = new idx_t[k * nq];
         float* D = new float[k * nq];
-        int M = 16; // Index的连边数目
+        int M = 32; // Index的连边数目
         faiss::IndexHNSWFlat quantizer(d, M);
+        quantizer.hnsw.efSearch = 32;
 //        faiss::IndexFlatL2 scan(d);
         faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
 //        index.clustering_index = &scan;
 
         double t1 = faiss::getmillisecs();
+//        index.quantizer_trains_alone = 0;
+        index.cp.niter = 0;
         index.quantizer_trains_alone = 0;
-
         index.train(nb, xb);
         index.add(nb, xb); // 这里是添加每一个点
         double t2 = faiss::getmillisecs();
         fout << t2 - t1 << "\n";
         printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
-        quantizer.hnsw.efSearch = 512;
+        quantizer.hnsw.efSearch = 2048;
 
 //        index.clustering_index = nullptr;
-        for (size_t i = 10; i <= 800; i += 20) {
+        for (size_t i = 1; i <= 30000; i *= 2) {
             index.nprobe = i; // 设置探测数
             t1 = faiss::getmillisecs();
             index.search(nq, xq, k, D, I);
@@ -171,13 +184,13 @@ int main() {
                 avg_recall += calculate_recall_k(qi, gi, k);
             }
             avg_recall /= nq;
-            fout << "(" << t2 - t1 << ", " << avg_recall << ")" << ", ";
+            fout << "(" << t2 - t1 << ", " << avg_recall << ")" << ", " << std::flush;
             printf("Recall@%d-probe@%ld: (Time, Recall)/(%lf, %f)\n", k, i, t2 - t1, avg_recall);
         }
 
         delete[] I;
         delete[] D;
-
+        fout.close();
 
 
 
@@ -231,6 +244,7 @@ int main() {
 
     }
 
+
     delete[] xb;
     delete[] xq;
     delete[] D_G;
@@ -238,4 +252,24 @@ int main() {
 
     return 0;
 }
+
+void fvecs_read(const char *path, float vecs[], int n, int d) {
+    std::fstream fin(path, std::ios_base::binary | std::ios_base::in);
+    if (!fin) {
+            std::cerr << "Can't open file: " << path << std::endl;
+            exit(1);
+    }
+
+    int df; // read dimension in the file
+    fin.read((char*)&df, sizeof(df));
+    assert(df == d);
+
+    int dummy; // dummy for one
+    for (int i = 0; i < n; i++) {
+            float *vec_i = vecs + i * d;
+            fin.read((char*)vec_i, sizeof(*vecs) * d);
+            fin.read((char*)&dummy, sizeof(dummy));
+    }
+}
+
 
