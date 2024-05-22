@@ -19,14 +19,23 @@ struct IndexGraphCluster :  Index {
 
     int seed = 1234;
 
+    Index* storage = nullptr;
+
 
     HNSW hnsw;
 
     std::unordered_map<idx_t, idx_t> graph2id;
 
-    IndexGraphCluster(
-            size_t d,
+    explicit IndexGraphCluster(
+            int d,
             size_t nlist,
+            int M,
+            MetricType metric = METRIC_L2);
+
+    explicit IndexGraphCluster(
+            Index *storage,
+            size_t nlist,
+            int M = 32,
             MetricType metric = METRIC_L2);
 
     IndexGraphCluster();
