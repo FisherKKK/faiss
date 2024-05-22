@@ -46,6 +46,7 @@ set(FAISS_SRC
   IndexScalarQuantizer.cpp
   IndexShards.cpp
   IndexShardsIVF.cpp
+  IndexGraphCluster.cpp
   MatrixStats.cpp
   MetaIndexes.cpp
   VectorTransform.cpp
@@ -138,6 +139,7 @@ set(FAISS_HEADERS
   IndexScalarQuantizer.h
   IndexShards.h
   IndexShardsIVF.h
+  IndexGraphCluster.h
   MatrixStats.h
   MetaIndexes.h
   MetricType.h
