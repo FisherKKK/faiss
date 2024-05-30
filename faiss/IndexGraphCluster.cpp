@@ -66,6 +66,12 @@ struct GraphMapDistanceComputer : DistanceComputer {
 
 } // namespace
 
+IndexGraphCluster::IndexGraphCluster(IndexFlatL2* storage, size_t nlist, size_t duplicate, int M)
+                : Index(storage->d, storage->metric_type),
+                    nlist(nlist), duplicate(duplicate), hnsw(M), storage(storage) {
+
+}
+
 void IndexGraphCluster::select_vertex(idx_t n) {
     // 选择nlist个vector构建hnsw, 但是为了防止重复计算, 我们需要一个mapper
     graph2id.reserve(nlist);
@@ -222,8 +228,15 @@ void IndexGraphCluster::add(idx_t n, const float* x) {
         const float *xi = x + i * d;
         auto top1 = search_top1(xi);
         auto nn = prune_neighbor(top1, *dis);
+
+        int nn_size = std::min(nn.size(), duplicate);
+
+        int counter = 0;
         for (auto id: nn) {
+            counter++;
             ivf[id].push_back(i);
+            if (counter >= nn_size)
+                break;
         }
     }
 }
@@ -284,7 +297,6 @@ void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distance
             res.end();
         }
     };
-
 
 
     find_nearest_partition();
