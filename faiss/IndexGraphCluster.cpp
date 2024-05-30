@@ -175,35 +175,39 @@ void IndexGraphCluster::train(idx_t n, const float* x) {
     is_trained = true;
 }
 
-std::pair<float, idx_t> IndexGraphCluster::search_top1(const float *x) const {
+std::pair<float, idx_t> IndexGraphCluster::search_top1(const float *x, DistanceComputer& dc) const {
     std::pair<float, idx_t> result;
     using RH = Top1BlockResultHandler<HNSW::C>;
 
     RH bres(1, &result.first, &result.second);
     RH::SingleResultHandler res(bres);
     VisitedTable vt(nlist);
-    std::unique_ptr<DistanceComputer> dis(new GraphMapDistanceComputer(storage->get_distance_computer(), graph2id));
 
     res.begin(0);
-    dis->set_query(x);
-    hnsw.search(*dis, res, vt);
+    hnsw.search(dc, res, vt);
     res.end();
 
     return result;
 
 }
 
-std::unordered_set<idx_t> IndexGraphCluster::prune_neighbor(std::pair<float, idx_t>& top1, DistanceComputer& dc) {
+std::vector<idx_t> IndexGraphCluster::prune_neighbor(std::pair<float, idx_t>& top1, DistanceComputer& dc) {
     size_t begin, end;
     hnsw.neighbor_range(top1.second, 0, &begin, &end);
 
     std::vector<std::pair<float, idx_t>> candidate_list;
-    std::unordered_set<idx_t> prune_list;
+    std::vector<idx_t> prune_list;
     candidate_list.push_back(top1);
     for (size_t nn = begin; nn < end; nn++) {
-        candidate_list.emplace_back(dc(nn), nn);
+        int v = hnsw.neighbors[nn];
+        if (v < 0)
+            break;
+        candidate_list.emplace_back(dc(v), v);
     }
     std::sort(candidate_list.begin(), candidate_list.end());
+    std::unique(candidate_list.begin(), candidate_list.end(), [&](const std::pair<float, idx_t>& f,  const std::pair<float, idx_t>& n) {
+        return f.second == n.second;
+    });
 
     for (auto &nn: candidate_list) {
         bool occlude = false;
@@ -214,7 +218,7 @@ std::unordered_set<idx_t> IndexGraphCluster::prune_neighbor(std::pair<float, idx
             }
         }
 
-        if (!occlude) prune_list.insert(nn.second);
+        if (!occlude) prune_list.push_back(nn.second);
     }
     return prune_list;
 }
@@ -222,11 +226,14 @@ std::unordered_set<idx_t> IndexGraphCluster::prune_neighbor(std::pair<float, idx
 
 void IndexGraphCluster::add(idx_t n, const float* x) {
     std::unique_ptr<DistanceComputer> dis(new GraphMapDistanceComputer(storage->get_distance_computer(), graph2id));
+    ivf.resize(nlist);
     for (idx_t i = 0; i < n; i++) {
         if (vertexes.count(i) != 0)
             continue;
         const float *xi = x + i * d;
-        auto top1 = search_top1(xi);
+        dis->set_query(xi);
+
+        auto top1 = search_top1(xi, *dis);
         auto nn = prune_neighbor(top1, *dis);
 
         int nn_size = std::min(nn.size(), duplicate);
@@ -263,6 +270,8 @@ void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distance
             RH::SingleResultHandler centroid_handler(bnn);
             centroid_handler.begin(i);
             for (int j = 0; j < nprobe; j++) {
+                if (bucket_lable[nprobe * i + j] < 0)
+                    continue;
                 centroid_handler.add_result(bucket_dis[nprobe * i + j],
                                             graph2id.at(bucket_lable[nprobe * i + j]));
 
@@ -285,7 +294,7 @@ void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distance
         std::unique_ptr<DistanceComputer> dc(storage->get_distance_computer());
         for (idx_t i = 0; i < n; i++) {
             const float *xi = x + i * d;
-            VisitedTable vt(ntotal);
+            VisitedTable vt(storage->ntotal);
             dc->set_query(xi);
             RH::SingleResultHandler res(bnn);
             res.begin(i);

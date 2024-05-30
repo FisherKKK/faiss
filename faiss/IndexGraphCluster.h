@@ -50,9 +50,9 @@ struct IndexGraphCluster : Index {
 
     void create_storage(idx_t n, const float *x);
 
-    std::pair<float, idx_t> search_top1(const float *x) const;
+    std::pair<float, idx_t> search_top1(const float *x, DistanceComputer& dc) const;
 
-    std::unordered_set<idx_t> prune_neighbor(std::pair<float, idx_t>& top1, DistanceComputer& dc);
+    std::vector<idx_t> prune_neighbor(std::pair<float, idx_t>& top1, DistanceComputer& dc);
 
     void search(idx_t n, const float *x, idx_t k, float *distances, idx_t *labels, const SearchParameters *params = nullptr) const override;
 
