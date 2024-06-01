@@ -25,6 +25,7 @@ struct IndexGraphCluster : Index {
 
     HNSW hnsw;
 
+
     IndexFlatL2* storage = nullptr;
 
     std::vector<std::vector<idx_t>> ivf;
@@ -55,6 +56,10 @@ struct IndexGraphCluster : Index {
     std::vector<idx_t> prune_neighbor(std::pair<float, idx_t>& top1, DistanceComputer& dc);
 
     void search(idx_t n, const float *x, idx_t k, float *distances, idx_t *labels, const SearchParameters *params = nullptr) const override;
+
+    void search_use_topk(idx_t n, const float *x, idx_t k, float *distances, idx_t *labels) const;
+
+    void search_use_neighbor(idx_t n, const float *x, idx_t k, float *distances, idx_t *labels) const;
 
     void reset() override {
 

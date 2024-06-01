@@ -11,6 +11,7 @@
 #include <faiss/utils/utils.h>
 #include <fstream>
 #include <iostream>
+#include <signal.h>
 
 void fvecs_read(const char *path, float vecs[], int n, int d);
 
@@ -28,9 +29,12 @@ float calculate_recall_k(idx_t *x, idx_t *y, int k) {
 using idx_t = faiss::idx_t;
 
 int main() {
+
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
     int d = 128;      // dimension
-    int nb = 1000000; // database size
-    int nq = 10000;  // nb of queries
+    int nb = 10000; // database size
+    int nq = 1000;  // nb of queries
 
 
 
@@ -41,7 +45,7 @@ int main() {
     fvecs_read("/home/dataset/sift/sift_query.fvecs", xq, nq, d);
 
     double sample_rate = 0.1;
-    int duplicate = 4;
+    int duplicate = 8;
     int k = 1;
 
 
@@ -57,13 +61,14 @@ int main() {
 
 
     {
-        std::fstream fout("/tmp/1.txt", std::ios_base::out);
+        std::fstream fout("/tmp/1_16topk.txt", std::ios_base::out);
         printf("**************HNSW-IVF Index****************\n");
         idx_t* I = new idx_t[k * nq];
         float* D = new float[k * nq];
         faiss::IndexFlatL2 storage(d);
         faiss::IndexGraphCluster index(&storage, sample_rate * nb, duplicate, 32);
-
+        index.hnsw.efConstruction = 32;
+        index.hnsw.max_level = 0;
         double t1 = faiss::getmillisecs();
         index.train(nb, xb);
         index.add(nb, xb);
@@ -72,6 +77,7 @@ int main() {
 
         printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
         for (size_t i = 1; i <= 30000; i *= 2) {
+//            index.hnsw.efSearch = i;
             index.nprobe = i; // 设置探测数
             t1 = faiss::getmillisecs();
             index.search(nq, xq, k, D, I);

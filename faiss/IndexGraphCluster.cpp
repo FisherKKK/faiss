@@ -218,7 +218,8 @@ std::vector<idx_t> IndexGraphCluster::prune_neighbor(std::pair<float, idx_t>& to
             }
         }
 
-        if (!occlude) prune_list.push_back(nn.second);
+//        if (!occlude) prune_list.push_back(nn.second);
+        prune_list.push_back(nn.second);
     }
     return prune_list;
 }
@@ -248,7 +249,8 @@ void IndexGraphCluster::add(idx_t n, const float* x) {
     }
 }
 
-void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distances, idx_t* labels, const SearchParameters* params) const {
+
+void IndexGraphCluster::search_use_topk(idx_t n, const float* x, idx_t k, float* distances, idx_t* labels) const {
     using RH = HeapBlockResultHandler<HNSW::C>;
     std::vector<float> bucket_dis(nprobe * n);
     std::vector<idx_t> bucket_lable(nprobe * n);
@@ -310,9 +312,128 @@ void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distance
 
     find_nearest_partition();
     find_nearest_neighbor();
+}
 
+void IndexGraphCluster::search_use_neighbor(idx_t n, const float* x, idx_t k, float* distances, idx_t* labels) const {
+    using RH = HeapBlockResultHandler<HNSW::C>;
+    std::vector<float> bucket_dis(nprobe * n);
+    std::vector<idx_t> bucket_lable(nprobe * n);
+    RH bnn(n, distances, labels, k);
+
+    auto explore_centroid_neighbor = [&](idx_t iq) -> std::vector<idx_t> {
+        std::vector<idx_t> neighbors;
+        std::queue<idx_t> q;
+        VisitedTable vt(nlist);
+
+        for (int i = 0; i < nprobe; i++) {
+            idx_t id = bucket_lable[iq * nprobe + i];
+            if (id < 0)
+                continue;
+            vt.set(id);
+            q.push(id);
+        }
+
+
+        int num_visited = 1;
+        while (num_visited < nprobe * 2 && !q.empty()) {
+            idx_t vn = q.front(); q.pop();
+            size_t begin, end;
+            hnsw.neighbor_range(vn, 0, &begin, &end);
+            for (size_t nn = begin; nn < end; nn++) {
+                idx_t nxt = hnsw.neighbors[nn];
+                if (nxt < 0)
+                    break;
+                if (vt.get(nxt))
+                    continue;
+                vt.set(nxt);
+                q.push(nxt);
+                neighbors.push_back(nxt);
+                num_visited += 1;
+            }
+        }
+        return neighbors;
+    };
+
+    auto find_nearest_point_neighbor = [&]() {
+        std::unique_ptr<DistanceComputer> dc(new GraphMapDistanceComputer(storage->get_distance_computer(), graph2id));
+
+        RH bnc(n, bucket_dis.data(), bucket_lable.data(), nprobe);
+        for (idx_t i = 0; i < n; i++) {
+            const float *xi = x + i * d;
+            VisitedTable vt(nlist);
+            RH::SingleResultHandler res(bnc);
+            res.begin(i);
+            dc->set_query(xi);
+            hnsw.search(*dc, res, vt); // 计算最近的centroid
+//            res.end();
+
+            // find the neighbor of the centroid
+            RH::SingleResultHandler centroid_handler(bnn);
+            centroid_handler.begin(i);
+
+            for (int j = 0; j < nprobe; j++) {
+                if (bucket_lable[nprobe * i + j] < 0)
+                    continue;
+                centroid_handler.add_result(bucket_dis[nprobe * i + j],
+                                            graph2id.at(bucket_lable[nprobe * i + j]));
+
+            } // 同步更新到最终结果
+
+
+
+            auto nns = explore_centroid_neighbor(i);
+//            res.begin(i);
+
+
+            for (auto id: nns) {
+                float _d = (*dc)(id);
+                res.add_result(_d, id); // 为中心做准备
+                centroid_handler.add_result(_d,graph2id.at(id));
+            }
+
+            res.end();
+            centroid_handler.end();
+        }
+    };
+
+    auto search_subroutine = [](DistanceComputer& dc , RH::SingleResultHandler &res, const std::vector<idx_t>& subset, VisitedTable &vt) {
+        for (auto id: subset) {
+            if (vt.get(id))
+                continue;
+            vt.set(id);
+            res.add_result(dc(id), id);
+        }
+    };
+
+    auto find_nearest_neighbor = [&]() {
+        std::unique_ptr<DistanceComputer> dc(storage->get_distance_computer());
+        for (idx_t i = 0; i < n; i++) {
+            const float *xi = x + i * d;
+            VisitedTable vt(storage->ntotal);
+            dc->set_query(xi);
+            RH::SingleResultHandler res(bnn);
+            res.begin(i);
+            for (int j = 0; j < nprobe; j++) {
+                int centroid = bucket_lable[i * nprobe + j];
+                if (centroid >= 0)
+                    search_subroutine(*dc, res, ivf[centroid], vt);
+            }
+            res.end();
+        }
+    };
+
+    find_nearest_point_neighbor();
+    find_nearest_neighbor();
 
 }
+
+
+
+void IndexGraphCluster::search(idx_t n, const float* x, idx_t k, float* distances, idx_t* labels, const SearchParameters* params) const {
+    search_use_neighbor(n, x, k, distances, labels);
+//    search_use_topk(n, x, k, distances, labels);
+}
+
 
 
 
