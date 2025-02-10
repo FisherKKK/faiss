@@ -77,7 +77,6 @@ void Level1Quantizer::train_q1(
             printf("Training level-1 quantizer on %zd vectors in %zdD\n", n, d);
 
         Clustering clus(d, nlist, cp);
-//        clus.niter = 0;
         quantizer->reset();
         if (clustering_index) {
             clus.train(n, x, *clustering_index);
@@ -390,6 +389,11 @@ void IndexIVF::search(
         for (idx_t slice = 0; slice < nt; slice++) {
             indexIVF_stats.add(stats[slice]);
         }
+
+        printf("nlist: %lu, ndis: %lu, nq: %lu\n",
+               indexIVF_stats.nlist,
+               indexIVF_stats.ndis,
+               indexIVF_stats.nq);
     } else {
         // handle parallelization at level below (or don't run in parallel at
         // all)

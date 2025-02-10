@@ -7,6 +7,7 @@
 #include <faiss/utils/utils.h>
 #include <fstream>
 #include <iostream>
+#include <signal.h>
 
 void fvecs_read(const char *path, float vecs[], int n, int d);
 
@@ -22,21 +23,28 @@ float calculate_recall_k(idx_t *x, idx_t *y, int k) {
 }
 
 int main() {
-    int d = 128;      // dimension
+    signal(SIGTERM, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+
+    int d = 960;      // dimension
     int nb = 1000000; // database size
-    int nq = 10000;  // nb of queries
+    int nq = 1000;  // nb of queries
+
 
 
 
     float* xb = new float[d * nb];
     float* xq = new float[d * nq];
 
+
+    fvecs_read("/home/dataset/gist/gist_base.fvecs", xb, nb, d);
+    fvecs_read("/home/dataset/gist/gist_query.fvecs", xq, nq, d);
+
+
     /*
-    fvecs_read("/data/sift/sift_base.fvecs", xb, nb, d);
-    fvecs_read("/data/sift/sift_query.fvecs", xq, nq, d);
-     */
 
     // random data
+
     std::mt19937 rng;
     std::uniform_real_distribution<> distrib;
     for (int i = 0; i < nb; i++) {
@@ -51,6 +59,9 @@ int main() {
 //        xq[d * i] += i / 1000.;
     }
      //
+
+     */
+
 
     double sample_rate = 0.1;
     int seed = 12345;
@@ -153,24 +164,25 @@ int main() {
         float* D = new float[k * nq];
         int M = 32; // Index的连边数目
         faiss::IndexHNSWFlat quantizer(d, M);
-        quantizer.hnsw.efSearch = 32;
+        quantizer.hnsw.efConstruction = 32;
 //        faiss::IndexFlatL2 scan(d);
         faiss::IndexIVFFlat index(&quantizer, d, nb * sample_rate);
 //        index.clustering_index = &scan;
 
         double t1 = faiss::getmillisecs();
-//        index.quantizer_trains_alone = 0;
-        index.cp.niter = 0;
+        index.cp.niter = 5;
         index.quantizer_trains_alone = 0;
         index.train(nb, xb);
         index.add(nb, xb); // 这里是添加每一个点
         double t2 = faiss::getmillisecs();
         fout << t2 - t1 << "\n";
         printf("Time cost for HNSW-Graph: %lf\n", t2 - t1);
-        quantizer.hnsw.efSearch = 2048;
+        quantizer.hnsw.efSearch = 1024;
 
 //        index.clustering_index = nullptr;
-        for (size_t i = 1; i <= 30000; i *= 2) {
+        //TODO:
+//        omp_set_num_threads(1);
+        for (size_t i = 1024; i <= 1024; i *= 2) {
             index.nprobe = i; // 设置探测数
             t1 = faiss::getmillisecs();
             index.search(nq, xq, k, D, I);
