@@ -52,9 +52,15 @@ cd build/faiss/python && python setup.py install
 # Run C++ test suite
 make -C build test
 
+# Run a specific C++ test
+./build/tests/faiss_test --gtest_filter=TestName.*
+
 # Run Python tests (after building Python bindings)
 cd build/faiss/python && python setup.py build
 PYTHONPATH="$(ls -d ./build/faiss/python/build/lib*/)" pytest tests/test_*.py
+
+# Run a specific Python test
+PYTHONPATH="$(ls -d ./build/faiss/python/build/lib*/)" pytest tests/test_index_composite.py -v
 ```
 
 ### Running Demos
@@ -75,8 +81,16 @@ make -C build demo_ivfpq_indexing_gpu
 
 - `faiss/` - Main C++ library source code
   - `Index*.{h,cpp}` - Index implementations (root level)
-  - `impl/` - Core data structures and algorithms (AuxIndexStructures, HNSW, AdditiveQuantizer, etc.)
-  - `utils/` - Utility functions (distances, heaps, SIMD operations, etc.)
+  - `impl/` - Core data structures and algorithms
+    - Quantizers: `AdditiveQuantizer`, `ProductQuantizer`, `ResidualQuantizer`, `ScalarQuantizer`, `RaBitQuantizer`
+    - Graph structures: `HNSW`, `NSG`, `NNDescent`
+    - Auxiliary structures: `AuxIndexStructures`, `IDSelector`, `DistanceComputer`
+    - I/O operations: `index_read.cpp`, `index_write.cpp`, `io.cpp`
+  - `utils/` - Utility functions
+    - Distance computation: `distances.cpp`, `distances_simd.cpp`, `extra_distances.cpp`
+    - SIMD operations: `simdlib*.h` (AVX2, AVX512, NEON, etc.)
+    - Data structures: `Heap`, `AlignedTable`
+    - Other utilities: `hamming.cpp`, `partitioning.cpp`, `random.cpp`
   - `invlists/` - Inverted list implementations (InvertedLists, BlockInvertedLists, OnDiskInvertedLists)
   - `gpu/` - GPU implementations (CUDA/ROCm)
   - `python/` - Python binding code (SWIG-based)
@@ -119,6 +133,10 @@ make -C build demo_ivfpq_indexing_gpu
 - `MetricType` - Enum for distance metrics (METRIC_L2, METRIC_INNER_PRODUCT, METRIC_L1, etc.)
 - `SearchParameters` - Base class for search-time parameters (e.g., filtering with IDSelector)
 
+### Vector Representation
+
+Vectors are provided as `float*` pointers in row-major storage. When n vectors of size d are passed as `float* x`, component j of vector i is accessed as `x[i * d + j]` where 0 <= i < n and 0 <= j < d.
+
 ### Code Organization Patterns
 
 - Index classes define virtual methods for `add()`, `search()`, `train()`, `reset()`
@@ -133,6 +151,9 @@ make -C build demo_ivfpq_indexing_gpu
 - Line length: 80 characters for both C++ and Python
 - Use `faiss::idx_t` instead of `long` for compatibility across platforms
 - All code is in the `faiss` namespace
+- Code formatting: Use `clang-format` with the `.clang-format` configuration file in the repository root
+  - Format a file: `clang-format -i <file>`
+  - The configuration enforces project style: 4-space indentation, 80-column limit, left pointer alignment
 
 ## Testing Conventions
 
@@ -178,11 +199,30 @@ For iterative development, build specific targets:
 # Build only the core library
 make -C build -j faiss
 
-# Build tests
+# Build specific test executable
 make -C build -j faiss_test
 
 # Build specific demo
 make -C build demo_sift1M
+
+# Build specific benchmark
+make -C build -j bench_gpu_1bn
 ```
 
 The `-j` flag enables parallel compilation but may cause out-of-memory issues on resource-constrained systems. Use `-j4` to limit parallelism.
+
+## Useful Development Commands
+
+```bash
+# Format code with clang-format
+clang-format -i faiss/IndexIVFPQ.cpp
+
+# Check if build directory is already configured
+ls build/CMakeCache.txt
+
+# Clean and rebuild
+rm -rf build && cmake -B build . && make -C build -j faiss
+
+# View available CMake targets
+cmake --build build --target help
+```
