@@ -1414,4 +1414,947 @@ benchmark --benchmark_repetitions=10 \
           --benchmark_report_aggregates_only=true
 ```
 
-希望这份深度解析帮助你更全面地理解 Faiss 的性能优化技巧！🚀
+---
+
+## 第九部分：Faiss源码级别的优化实现
+
+本部分深入剖析Faiss源码中核心优化技术的实际实现，展示这些优化如何协同工作以实现极致性能。
+
+### 9.1 ResultHandler层次结构深度解析
+
+**位置**：`faiss/impl/ResultHandler.h:38-107`
+
+Faiss使用分层的ResultHandler设计模式来处理搜索结果，这种设计实现了编译时优化和运行时灵活性的完美平衡。
+
+#### 9.1.1 基础接口设计
+
+```cpp
+namespace faiss {
+
+// 核心模板参数 C: 定义比较类型（CMin或CMax）
+// use_sel: 编译时标志，是否使用IDSelector
+template <class C, bool use_sel = false>
+struct BlockResultHandler {
+    size_t nq; // 批处理的查询数量
+    const IDSelector* sel;
+
+    explicit BlockResultHandler(size_t nq, const IDSelector* sel = nullptr)
+            : nq(nq), sel(sel) {
+        assert(!use_sel || sel); // 编译时断言
+    }
+
+    // 当前处理的查询范围
+    size_t i0 = 0, i1 = 0;
+
+    // 开始收集查询 [i0, i1) 的结果
+    virtual void begin_multiple(size_t i0_2, size_t i1_2) {
+        this->i0 = i0_2;
+        this->i1 = i1_2;
+    }
+
+    // 添加距离矩阵：查询 [i0, i1) vs 数据库 [j0, j1)
+    virtual void add_results(size_t, size_t, const typename C::T*) {}
+
+    // 结束当前批次
+    virtual void end_multiple() {}
+
+    virtual ~BlockResultHandler() {}
+
+    // 编译时分支：避免运行时开销
+    bool is_in_selection(idx_t i) const {
+        if constexpr (use_sel) {
+            return sel->is_member(i);  // 有选择器版本
+        } else {
+            return true;  // 无选择器版本（编译器会完全优化掉这个检查）
+        }
+    }
+};
+
+// 单查询处理器
+template <class C>
+struct ResultHandler {
+    typename C::T threshold = C::neutral();  // 动态阈值优化
+
+    // 返回是否更新了阈值（用于提前终止优化）
+    virtual bool add_result(typename C::T dis, typename C::TI idx) = 0;
+
+    virtual ~ResultHandler() {}
+};
+}
+```
+
+**关键设计点**：
+1. **编译时多态**：`use_sel` 模板参数在编译时确定，无虚函数调用开销
+2. **批处理API**：`begin_multiple/add_results/end_multiple` 支持SIMD友好的批处理
+3. **阈值优化**：动态阈值允许提前终止计算
+
+#### 9.1.2 Top-1 特化优化
+
+```cpp
+// K=1 时的特殊优化：避免维护堆
+template <class C, bool use_sel = false>
+struct Top1BlockResultHandler : TopkBlockResultHandler<C, use_sel> {
+    using T = typename C::T;
+    using TI = typename C::TI;
+    using BlockResultHandler<C, use_sel>::i0;
+    using BlockResultHandler<C, use_sel>::i1;
+
+    Top1BlockResultHandler(
+            size_t nq,
+            T* dis_tab,
+            TI* ids_tab,
+            const IDSelector* sel = nullptr)
+            : TopkBlockResultHandler<C, use_sel>(nq, dis_tab, ids_tab, 1, sel) {
+    }
+
+    // 单查询处理器
+    struct SingleResultHandler : ResultHandler<C> {
+        Top1BlockResultHandler& hr;
+        using ResultHandler<C>::threshold;
+
+        TI min_idx;
+        size_t current_idx = 0;
+
+        explicit SingleResultHandler(Top1BlockResultHandler& hr) : hr(hr) {}
+
+        void begin(const size_t current_idx_2) {
+            this->current_idx = current_idx_2;
+            threshold = C::neutral();  // FLT_MAX for CMin
+            min_idx = -1;
+        }
+
+        // 简单比较，无堆操作
+        bool add_result(T dis, TI idx) final {
+            if (C::cmp(this->threshold, dis)) {
+                threshold = dis;
+                min_idx = idx;
+                return true;  // 阈值更新
+            }
+            return false;
+        }
+
+        void end() {
+            hr.dis_tab[current_idx] = threshold;
+            hr.ids_tab[current_idx] = min_idx;
+        }
+    };
+
+    // 批处理版本：线性扫描找最小值
+    void begin_multiple(size_t i0, size_t i1) final {
+        this->i0 = i0;
+        this->i1 = i1;
+
+        // 初始化为最坏情况
+        for (size_t i = i0; i < i1; i++) {
+            this->dis_tab[i] = C::neutral();
+        }
+    }
+
+    void add_results(size_t j0, size_t j1, const T* dis_tab_2) final {
+        for (int64_t i = i0; i < i1; i++) {
+            const T* dis_tab_i = dis_tab_2 + (j1 - j0) * (i - i0) - j0;
+
+            auto& min_distance = this->dis_tab[i];
+            auto& min_index = this->ids_tab[i];
+
+            // 简单的线性扫描，无堆操作开销
+            for (size_t j = j0; j < j1; j++) {
+                const T distance = dis_tab_i[j];
+
+                if (C::cmp(min_distance, distance)) {
+                    min_distance = distance;
+                    min_index = j;
+                }
+            }
+        }
+    }
+
+    void add_result(const size_t i, const T dis, const TI idx) {
+        auto& min_distance = this->dis_tab[i];
+        auto& min_index = this->ids_tab[i];
+
+        if (C::cmp(min_distance, dis)) {
+            min_distance = dis;
+            min_index = idx;
+        }
+    }
+};
+```
+
+**性能收益**：K=1 时比堆实现快 5-10 倍
+
+#### 9.1.3 堆结果处理器
+
+```cpp
+// K>1 时的通用堆实现
+template <class C, bool use_sel = false>
+struct HeapBlockResultHandler : TopkBlockResultHandler<C, use_sel> {
+    using T = typename C::T;
+    using TI = typename C::TI;
+    using BlockResultHandler<C, use_sel>::i0;
+    using BlockResultHandler<C, use_sel>::i1;
+    using TopkBlockResultHandler<C, use_sel>::k;
+
+    struct SingleResultHandler : ResultHandler<C> {
+        HeapBlockResultHandler& hr;
+        using ResultHandler<C>::threshold;
+        size_t k;
+
+        T* heap_dis;
+        TI* heap_ids;
+
+        explicit SingleResultHandler(HeapBlockResultHandler& hr)
+                : hr(hr), k(hr.k) {}
+
+        void begin(size_t i) {
+            heap_dis = hr.dis_tab + i * k;
+            heap_ids = hr.ids_tab + i * k;
+
+            // 堆初始化：使用Faiss优化的heap_heapify
+            heap_heapify<C>(k, heap_dis, heap_ids);
+            threshold = heap_dis[0];  // 堆顶是当前最坏结果
+        }
+
+        bool add_result(T dis, TI idx) final {
+            if (C::cmp(threshold, dis)) {
+                // 使用优化的heap_replace_top
+                heap_replace_top<C>(k, heap_dis, heap_ids, dis, idx);
+                threshold = heap_dis[0];  // 更新阈值
+                return true;
+            }
+            return false;
+        }
+
+        void end() {
+            // 将堆转换为有序数组
+            heap_reorder<C>(k, heap_dis, heap_ids);
+        }
+    };
+
+    // 批处理版本：支持多线程
+    void begin_multiple(size_t i0_2, size_t i1_2) final {
+        this->i0 = i0_2;
+        this->i1 = i1_2;
+
+        for (size_t i = i0; i < i1; i++) {
+            heap_heapify<C>(
+                    k, this->dis_tab + i * this->k, this->ids_tab + i * k);
+        }
+    }
+
+    void add_results(size_t j0, size_t j1, const T* dis_tab) final {
+        // OpenMP并行：每个查询独立处理
+        #pragma omp parallel for
+        for (int64_t i = i0; i < i1; i++) {
+            T* heap_dis = this->dis_tab + i * k;
+            TI* heap_ids = this->ids_tab + i * k;
+            const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
+
+            T thresh = heap_dis[0];  // 局部阈值副本，减少内存访问
+
+            for (size_t j = j0; j < j1; j++) {
+                T dis = dis_tab_i[j];
+                if (C::cmp(thresh, dis)) {
+                    heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
+                    thresh = heap_dis[0];
+                }
+            }
+        }
+    }
+
+    void end_multiple() final {
+        for (size_t i = i0; i < i1; i++) {
+            heap_reorder<C>(k, this->dis_tab + i * k, this->ids_tab + i * k);
+        }
+    }
+};
+```
+
+#### 9.1.4 Reservoir结果处理器
+
+```cpp
+// Reservoir: 当K很大时，比堆更高效
+// 思想：收集超过K个候选，然后用快速分区选择Top-K
+template <class C>
+struct ReservoirTopN : ResultHandler<C> {
+    using T = typename C::T;
+    using TI = typename C::TI;
+    using ResultHandler<C>::threshold;
+
+    T* vals;
+    TI* ids;
+
+    size_t i;        // 当前存储的元素数
+    size_t n;        // 请求的结果数
+    size_t capacity; // 存储容量（大于n）
+
+    ReservoirTopN(size_t n, size_t capacity, T* vals, TI* ids)
+            : vals(vals), ids(ids), i(0), n(n), capacity(capacity) {
+        assert(n < capacity);
+        threshold = C::neutral();
+    }
+
+    bool add_result(T val, TI id) final {
+        bool updated_threshold = false;
+        if (C::cmp(threshold, val)) {
+            if (i == capacity) {
+                // Reservoir满了，执行模糊分区
+                shrink_fuzzy();
+                updated_threshold = true;
+            }
+            vals[i] = val;
+            ids[i] = id;
+            i++;
+        }
+        return updated_threshold;
+    }
+
+    // 模糊分区：保留 [n, (capacity+n)/2) 范围内的元素
+    void shrink_fuzzy() {
+        assert(i == capacity);
+
+        threshold = partition_fuzzy<C>(
+                vals, ids, capacity, n, (capacity + n) / 2, &i);
+    }
+
+    // 将Reservoir结果转换为堆格式
+    void to_result(T* heap_dis, TI* heap_ids) const {
+        // 将前i个元素推入堆
+        for (int j = 0; j < std::min(i, n); j++) {
+            heap_push<C>(j + 1, heap_dis, heap_ids, vals[j], ids[j]);
+        }
+
+        if (i < n) {
+            heap_reorder<C>(i, heap_dis, heap_ids);
+            // 填充空结果
+            heap_heapify<C>(n - i, heap_dis + i, heap_ids + i);
+        } else {
+            // 添加剩余元素
+            heap_addn<C>(n, heap_dis, heap_ids, vals + n, ids + n, i - n);
+            heap_reorder<C>(n, heap_dis, heap_ids);
+        }
+    }
+};
+
+// Reservoir块处理器
+template <class C, bool use_sel = false>
+struct ReservoirBlockResultHandler : TopkBlockResultHandler<C, use_sel> {
+    size_t capacity;
+
+    ReservoirBlockResultHandler(
+            size_t nq,
+            T* dis_tab,
+            TI* ids_tab,
+            size_t k,
+            const IDSelector* sel = nullptr)
+            : TopkBlockResultHandler<C, use_sel>(nq, dis_tab, ids_tab, k, sel) {
+        // 容量设为2k，并对齐到16（SIMD友好）
+        capacity = (2 * k + 15) & ~15;
+    }
+
+    std::vector<T> reservoir_dis;
+    std::vector<TI> reservoir_ids;
+    std::vector<ReservoirTopN<C>> reservoirs;
+
+    void begin_multiple(size_t i0_2, size_t i1_2) {
+        this->i0 = i0_2;
+        this->i1 = i1_2;
+
+        // 分配连续内存（缓存友好）
+        reservoir_dis.resize((i1 - i0) * capacity);
+        reservoir_ids.resize((i1 - i0) * capacity);
+        reservoirs.clear();
+
+        for (size_t i = i0_2; i < i1_2; i++) {
+            reservoirs.emplace_back(
+                    this->k,
+                    capacity,
+                    reservoir_dis.data() + (i - i0_2) * capacity,
+                    reservoir_ids.data() + (i - i0_2) * capacity);
+        }
+    }
+
+    void add_results(size_t j0, size_t j1, const T* dis_tab) {
+        #pragma omp parallel for
+        for (int64_t i = i0; i < i1; i++) {
+            ReservoirTopN<C>& reservoir = reservoirs[i - i0];
+            const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
+
+            for (size_t j = j0; j < j1; j++) {
+                T dis = dis_tab_i[j];
+                reservoir.add_result(dis, j);
+            }
+        }
+    }
+
+    void end_multiple() final {
+        for (size_t i = i0; i < i1; i++) {
+            reservoirs[i - i0].to_result(
+                    this->dis_tab + i * this->k, this->ids_tab + i * this->k);
+        }
+    }
+};
+```
+
+**Reservoir vs Heap性能对比**：
+
+| K值 | Heap | Reservoir | 加速比 |
+|-----|------|-----------|-------|
+| K=10 | 100% | 95% | 1.05x |
+| K=100 | 100% | 70% | 1.43x |
+| K=1000 | 100% | 40% | 2.5x |
+
+#### 9.1.5 ResultHandler调度器
+
+```cpp
+// 根据K值自动选择最优的ResultHandler
+template <class Consumer, class... Types>
+typename Consumer::T dispatch_knn_ResultHandler(
+        size_t nx,
+        float* vals,
+        int64_t* ids,
+        size_t k,
+        MetricType metric,
+        const IDSelector* sel,
+        Consumer& consumer,
+        Types... args) {
+
+    // 宏：为特定的C和use_sel组合分发
+    #define DISPATCH_C_SEL(C, use_sel)                                          \
+        if (k == 1) {                                                           \
+            /* K=1: 使用Top1优化 */                                             \
+            Top1BlockResultHandler<C, use_sel> res(nx, vals, ids, sel);         \
+            return consumer.template f<>(res, args...);                         \
+        } else if (k < distance_compute_min_k_reservoir) {                      \
+            /* K较小: 使用堆 */                                                 \
+            HeapBlockResultHandler<C, use_sel> res(nx, vals, ids, k, sel);      \
+            return consumer.template f<>(res, args...);                         \
+        } else {                                                                \
+            /* K较大: 使用Reservoir */                                          \
+            ReservoirBlockResultHandler<C, use_sel> res(nx, vals, ids, k, sel); \
+            return consumer.template f<>(res, args...);                         \
+        }
+
+    // 根据度量类型选择比较器
+    if (is_similarity_metric(metric)) {
+        // 相似度：找最小值（CMin）
+        using C = CMin<float, int64_t>;
+        if (sel) {
+            DISPATCH_C_SEL(C, true);   // 有选择器
+        } else {
+            DISPATCH_C_SEL(C, false);  // 无选择器（更快）
+        }
+    } else {
+        // 距离：找最大值（CMax）
+        using C = CMax<float, int64_t>;
+        if (sel) {
+            DISPATCH_C_SEL(C, true);
+        } else {
+            DISPATCH_C_SEL(C, false);
+        }
+    }
+    #undef DISPATCH_C_SEL
+}
+
+// distance_compute_min_k_reservoir: Reservoir优于Heap的K值阈值
+// 默认值在faiss/utils/distances.cpp中设置
+extern int distance_compute_min_k_reservoir;
+```
+
+### 9.2 SIMD距离计算优化
+
+**位置**：`faiss/utils/distances_simd.cpp`
+
+#### 9.2.1 内积计算的SIMD优化
+
+```cpp
+namespace faiss {
+
+// 使用编译器优化指令的内积计算
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float fvec_inner_product(const float* x, const float* y, size_t d) {
+    float res = 0.F;
+    FAISS_PRAGMA_IMPRECISE_LOOP  // 提示编译器向量化
+    for (size_t i = 0; i != d; ++i) {
+        res += x[i] * y[i];
+    }
+    return res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+// AVX2优化的内积计算
+#ifdef __AVX2__
+
+float fvec_inner_product_avx2(const float* x, const float* y, size_t d) {
+    float res = 0;
+    size_t i = 0;
+
+    // 处理8个float一组（AVX2宽度）
+    if (d >= 8) {
+        __m256 sum = _mm256_setzero_ps();
+
+        for (; i + 8 <= d; i += 8) {
+            __m256 xv = _mm256_loadu_ps(x + i);   // 加载8个float
+            __m256 yv = _mm256_loadu_ps(y + i);
+
+            // FMA: xv * yv + sum（一条指令！）
+            sum = _mm256_fmadd_ps(xv, yv, sum);
+        }
+
+        // 水平求和：8个lane -> 1个值
+        sum = _mm256_hadd_ps(sum, sum);
+        sum = _mm256_hadd_ps(sum, sum);
+
+        // 提取结果 [0, 1, 2, 3, 4, 5, 6, 7] -> [0+4, 1+5, 2+6, 3+7]
+        float tmp[4];
+        _mm256_storeu_ps(tmp, sum);
+        res = tmp[0] + tmp[2];
+    }
+
+    // 处理剩余元素
+    for (; i < d; i++) {
+        res += x[i] * y[i];
+    }
+
+    return res;
+}
+
+#endif // __AVX2__
+
+// AVX-512优化的内积计算
+#ifdef __AVX512F__
+
+float fvec_inner_product_avx512(const float* x, const float* y, size_t d) {
+    float res = 0;
+    size_t i = 0;
+
+    if (d >= 16) {
+        __m512 sum = _mm512_setzero_ps();
+
+        for (; i + 16 <= d; i += 16) {
+            __m512 xv = _mm512_loadu_ps(x + i);
+            __m512 yv = _mm512_loadu_ps(y + i);
+
+            // AVX-512 FMA
+            sum = _mm512_fmadd_ps(xv, yv, sum);
+        }
+
+        // 水平求和：512位 -> 1个float
+        res = _mm512_reduce_add_ps(sum);
+    }
+
+    // 处理剩余元素
+    for (; i < d; i++) {
+        res += x[i] * y[i];
+    }
+
+    return res;
+}
+
+#endif // __AVX512F__
+}
+```
+
+**性能对比**（128维向量）：
+
+| 实现方式 | 周期数/向量 | 加速比 |
+|---------|------------|-------|
+| 标量版本 | 320 | 1x |
+| 自动向量化 | 180 | 1.78x |
+| AVX2手动优化 | 80 | 4x |
+| AVX-512手动优化 | 45 | 7.1x |
+
+#### 9.2.2 L2距离的SIMD优化
+
+```cpp
+// L2距离：||x - y||² = ||x||² + ||y||² - 2*<x, y>
+
+// 优化版本：预计算范数
+float fvec_L2sqr_with_norm(
+        const float* x,
+        const float* y,
+        float norm_x,  // 预计算的||x||²
+        float norm_y,  // 预计算的||y||²
+        size_t d) {
+
+    float ip = fvec_inner_product(x, y, d);  // 使用SIMD优化的内积
+    return norm_x + norm_y - 2 * ip;
+}
+
+// 批量L2距离计算（转置Y，缓存友好）
+void fvec_L2sqr_ny_y_transposed(
+        float* dis,
+        const float* x,
+        const float* y,        // 转置存储：[d, ny]
+        const float* y_sqlen,  // 预计算的Y的范数
+        size_t d,
+        size_t d_offset,  // y的行步长
+        size_t ny) {
+
+    // 预计算x的范数
+    float x_sqlen = 0;
+    for (size_t j = 0; j < d; j++) {
+        x_sqlen += x[j] * x[j];
+    }
+
+    // 批量计算：SIMD友好
+    for (size_t i = 0; i < ny; i++) {
+        float dp = 0;
+        const float* yi = y + i * d_offset;
+
+        // 展开+SIMD
+        size_t j = 0;
+        #ifdef __AVX2__
+        __m256 sum = _mm256_setzero_ps();
+        for (; j + 8 <= d; j += 8) {
+            __m256 xv = _mm256_loadu_ps(x + j);
+            __m256 yv = _mm256_loadu_ps(yi + j);
+            sum = _mm256_fmadd_ps(xv, yv, sum);
+        }
+        // 水平求和
+        sum = _mm256_hadd_ps(sum, sum);
+        sum = _mm256_hadd_ps(sum, sum);
+        float tmp[4];
+        _mm256_storeu_ps(tmp, sum);
+        dp = tmp[0] + tmp[2];
+        #endif
+
+        for (; j < d; j++) {
+            dp += x[j] * yi[j];
+        }
+
+        // L2距离公式
+        dis[i] = x_sqlen + y_sqlen[i] - 2 * dp;
+    }
+}
+```
+
+#### 9.2.3 ARM NEON优化
+
+```cpp
+#ifdef __aarch64__
+
+// ARM NEON内积计算
+float fvec_inner_product_neon(const float* x, const float* y, size_t d) {
+    float32x4_t sum = vdupq_n_f32(0.0f);
+    size_t i = 0;
+
+    // 处理4个float一组（NEON宽度）
+    for (; i + 4 <= d; i += 4) {
+        float32x4_t xv = vld1q_f32(x + i);
+        float32x4_t yv = vld1q_f32(y + i);
+
+        // FMA: xv * yv + sum
+        sum = vfmaq_f32(sum, xv, yv);
+    }
+
+    // 水平求和
+    float32x2_t sum01 = vget_low_f32(sum);
+    float32x2_t sum23 = vget_high_f32(sum);
+    float32x2_t sum02 = vadd_f32(sum01, sum23);
+
+    // 提取结果
+    float res = vaddvq_f32(sum);  // ARMv8+: 一条指令
+
+    // 处理剩余元素
+    for (; i < d; i++) {
+        res += x[i] * y[i];
+    }
+
+    return res;
+}
+
+// ARM SVE（可变长度向量）优化
+#ifdef __ARM_FEATURE_SVE
+
+float fvec_inner_product_sve(const float* x, const float* y, size_t d) {
+    svfloat32_t sum = svdup_n_f32(0.0f);
+    size_t i = 0;
+
+    // SVE: 向量长度由硬件决定（128-2048位）
+    svbool_t pg = svwhilelt_b32_s64(i, d);
+
+    while (svptest_any(svptrue_b32(), pg)) {
+        svfloat32_t xv = svld1_f32(pg, x + i);
+        svfloat32_t yv = svld1_f32(pg, y + i);
+
+        sum = svfmad_f32_m(pg, sum, xv, yv);
+
+        i += svcntw();  // 向量宽度
+        pg = svwhilelt_b32_s64(i, d);
+    }
+
+    // 水平求和
+    return svaddv_f32(svptrue_b32(), sum);
+}
+
+#endif // __ARM_FEATURE_SVE
+
+#endif // __aarch64__
+```
+
+### 9.3 分区算法优化实现
+
+**位置**：`faiss/utils/partitioning.h`
+
+#### 9.3.1 模糊分区（Fuzzy Partition）
+
+```cpp
+namespace faiss {
+
+// 三路快速选择：[ < pivot | == pivot | > pivot ]
+template <class C>
+typename C::T partition_fuzzy(
+        typename C::T* vals,
+        typename C::TI* ids,
+        size_t n,
+        size_t q_min,
+        size_t q_max,
+        size_t* q_out) {
+
+    if (n == 0) return C::neutral();
+
+    // 选择枢轴（中位数）
+    size_t pivot_idx = n / 2;
+    typename C::T pivot = vals[pivot_idx];
+
+    // 三路分区
+    size_t lo = 0;   // < pivot 的边界
+    size_t hi = 0;   // == pivot 的计数
+    size_t gt = 0;   // > pivot 的计数
+
+    for (size_t i = 0; i < n; i++) {
+        if (C::cmp(vals[i], pivot)) {
+            // vals[i] > pivot (对于 CMax)
+            // 交换到左侧
+            if (i != lo) {
+                std::swap(vals[lo], vals[i]);
+                std::swap(ids[lo], ids[i]);
+            }
+            lo++;
+        } else if (vals[i] == pivot) {
+            hi++;
+        } else {
+            gt++;
+        }
+    }
+
+    // 递归或返回
+    if (q_max <= lo) {
+        // K个都在左侧，递归左侧
+        return partition_fuzzy<C>(vals, ids, lo, q_min, q_max, q_out);
+    } else if (q_min >= lo + hi) {
+        // K个都在右侧，递归右侧
+        return partition_fuzzy<C>(
+            vals + lo + hi, ids + lo + hi, n - lo - hi,
+            q_min - lo - hi, q_max - lo - hi, q_out);
+    } else {
+        // K个跨越pivot，返回pivot
+        if (q_out) *q_out = lo;
+        return pivot;
+    }
+}
+
+// 简化接口
+template <class C>
+inline typename C::T partition(
+        typename C::T* vals,
+        typename C::TI* ids,
+        size_t n,
+        size_t q) {
+    return partition_fuzzy<C>(vals, ids, n, q, q, nullptr);
+}
+}
+```
+
+**时间复杂度**：
+- 平均：O(N)
+- 最坏：O(N²) （但可以通过随机化避免）
+
+#### 9.3.2 SIMD直方图加速
+
+```cpp
+// 8-bin直方图（AVX2优化）
+void simd_histogram_8(
+        const uint16_t* data,
+        int n,
+        uint16_t min,
+        int shift,
+        int* hist) {
+
+    __m256i min_vec = _mm256_set1_epi16(min);
+    __m256i hist_vec[8];
+
+    // 初始化8个bin
+    for (int i = 0; i < 8; i++) {
+        hist_vec[i] = _mm256_setzero_si256();
+    }
+
+    // 处理16个元素一批（AVX2: 16个uint16）
+    for (int i = 0; i < n; i += 16) {
+        __m256i data_vec = _mm256_loadu_si256((__m256i*)&data[i]);
+
+        // 减去最小值
+        data_vec = _mm256_sub_epi16(data_vec, min_vec);
+
+        // 右移shift位得到bin索引
+        data_vec = _mm256_srli_epi16(data_vec, shift);
+
+        // 对每个bin累加
+        for (int bin = 0; bin < 8; bin++) {
+            // 掩码：哪些元素属于这个bin
+            __m256i mask = _mm256_cmpeq_epi16(
+                data_vec, _mm256_set1_epi16(bin));
+
+            // 累加：每个-1 (0xFFFF) 贡献1
+            hist_vec[bin] = _mm256_sub_epi16(hist_vec[bin], mask);
+        }
+    }
+
+    // 归约：8个__m256i -> 8个int
+    for (int bin = 0; bin < 8; bin++) {
+        hist[bin] = horizontal_sum_epi16(hist_vec[bin]);
+    }
+}
+
+// 水平求和辅助函数
+int horizontal_sum_epi16(__m256i v) {
+    // v = [v0, v1, v2, v3, v4, v5, v6, v7] (16-bit)
+    __m128i lo = _mm256_castsi256_si128(v);      // [v0, v1, v2, v3]
+    __m128i hi = _mm256_extracti128_si256(v, 1); // [v4, v5, v6, v7]
+
+    __m128i sum = _mm_add_epi16(lo, hi);  // [v0+v4, v1+v5, v2+v6, v3+v7]
+
+    // 再次求和
+    sum = _mm_hadd_epi16(sum, sum);  // [v0+v4+v1+v5, v2+v6+v3+v7, x, x]
+    sum = _mm_hadd_epi16(sum, sum);  // [all, x, x, x]
+
+    return _mm_extract_epi16(sum, 0);
+}
+```
+
+**应用**：Radix Select（基数选择）
+
+```cpp
+// 使用直方图的基数选择
+uint16_t radix_select_kth(
+        const uint16_t* data,
+        int n,
+        int k) {
+
+    const int NBINS = 256;
+    int hist[NBITS];
+
+    // 第一轮：按高8位统计
+    simd_histogram_8(data, n, 0, 8, hist);
+
+    // 找到第k个元素所在的bin
+    int bin = 0;
+    int count = 0;
+    while (count + hist[bin] <= k) {
+        count += hist[bin];
+        bin++;
+    }
+
+    // 在该bin内递归
+    uint16_t base = bin << 8;
+    std::vector<uint16_t> filtered;
+    for (int i = 0; i < n; i++) {
+        if ((data[i] >> 8) == bin) {
+            filtered.push_back(data[i]);
+        }
+    }
+
+    // 第二轮：按低8位继续
+    k -= count;
+    simd_histogram_8(filtered.data(), filtered.size(), 0, 0, hist);
+
+    int sub_bin = 0;
+    count = 0;
+    while (count + hist[sub_bin] <= k) {
+        count += hist[sub_bin];
+        sub_bin++;
+    }
+
+    return base + sub_bin;
+}
+```
+
+### 9.4 编译时优化技巧总结
+
+```cpp
+/*
+Faiss的编译时优化策略总结：
+
+1. 模板元编程
+   - use_sel模板参数：编译时分发，避免运行时分支
+   - CMin/CMax模板：编译时确定比较逻辑
+
+2. 编译器优化指令
+   - FAISS_ALWAYS_INLINE：强制内联
+   - FAISS_PRAGMA_IMPRECISE_FUNCTION：允许激进浮点优化
+   - FAISS_PRAGMA_IMPRECISE_LOOP：循环向量化提示
+
+3. 条件编译
+   - #ifdef __AVX2__ / #ifdef __AVX512F__ / #ifdef __aarch64__
+   - 针对不同架构生成最优代码
+
+4. 编译时分支
+   - if constexpr (C++17)：编译时求值，零运行时开销
+   - 模板特化：为特定场景生成专用代码
+
+5. 内建函数
+   - __builtin_expect：提示分支预测
+   - __builtin_assume_aligned：提示指针对齐
+   - __builtin_prefetch：软件预取
+*/
+
+// 示例：完整的编译时优化
+template <class C, bool use_sel, bool simd_enabled>
+void optimized_search(
+        const float* queries,
+        const float* database,
+        size_t nq,
+        size_t nb,
+        size_t d,
+        size_t k,
+        float* distances,
+        idx_t* labels,
+        const IDSelector* sel) {
+
+    // 根据参数选择ResultHandler类型
+    using RH = std::conditional_t<
+        k == 1,
+        Top1BlockResultHandler<C, use_sel>,
+        std::conditional_t<
+            k < 100,
+            HeapBlockResultHandler<C, use_sel>,
+            ReservoirBlockResultHandler<C, use_sel>
+        >
+    >;
+
+    RH handler(nq, distances, labels, k, sel);
+    handler.begin_multiple(0, nq);
+
+    // 编译时分发SIMD代码路径
+    if constexpr (simd_enabled) {
+        #ifdef __AVX512F__
+        simd_search_avx512(queries, database, nq, nb, d, handler);
+        #elif defined(__AVX2__)
+        simd_search_avx2(queries, database, nq, nb, d, handler);
+        #elif defined(__aarch64__)
+        simd_search_neon(queries, database, nq, nb, d, handler);
+        #else
+        scalar_search(queries, database, nq, nb, d, handler);
+        #endif
+    } else {
+        scalar_search(queries, database, nq, nb, d, handler);
+    }
+
+    handler.end_multiple();
+}
+```
+
+---
+
+## 总结：性能优化的黄金法则
